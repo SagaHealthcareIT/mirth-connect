@@ -59,6 +59,12 @@ public interface ChannelServletInterface extends BaseServletInterface {
     @MirthOperation(name = "getChannels", display = "Get channels", permission = Permissions.CHANNELS_VIEW)
     public List<Channel> getChannels(@Param("channelIds") @ApiParam(value = "The IDs of the channels to retrieve. If absent, all channels will be retrieved.") @QueryParam("channelId") Set<String> channelIds, @Param("pollingOnly") @ApiParam(value = "If true, only channels with polling source connectors will be returned.") @QueryParam("pollingOnly") boolean pollingOnly) throws ClientException;
 
+    @POST
+    @Path("/_getChannels")
+    @ApiOperation("Retrieve a list of all channels, or multiple channels by ID. This is a POST request alternative to GET /channels that may be used when there are too many channel IDs to include in the query parameters.")
+    @MirthOperation(name = "getChannels", display = "Get channels", permission = Permissions.CHANNELS_VIEW)
+    public List<Channel> getChannelsPost(@Param("channelIds") @ApiParam(value = "The IDs of the channels to retrieve. If absent, all channels will be retrieved.") Set<String> channelIds, @Param("pollingOnly") @ApiParam(value = "If true, only channels with polling source connectors will be returned.") @QueryParam("pollingOnly") boolean pollingOnly) throws ClientException;
+
     @GET
     @Path("/{channelId}")
     @ApiOperation("Retrieve a single channel by ID.")
@@ -96,7 +102,7 @@ public interface ChannelServletInterface extends BaseServletInterface {
             @Param("enabled") @ApiParam(value = "Indicates whether the channels should be enabled or disabled.", required = true) @FormParam("enabled") boolean enabled) throws ClientException;
     // @formatter:on
 
-    @PUT
+    @POST
     @Path("/{channelId}/enabled/{enabled}")
     @ApiOperation("Enables/disables the specified channel.")
     @MirthOperation(name = "setChannelEnabled", display = "Set channel enabled flag", permission = Permissions.CHANNELS_MANAGE)
@@ -115,13 +121,13 @@ public interface ChannelServletInterface extends BaseServletInterface {
             @Param("initialState") @ApiParam(value = "The initial state of the channel.", allowableValues = "STARTED, PAUSED, STOPPED", required = true) @FormParam("initialState") DeployedState initialState) throws ClientException;
     // @formatter:on
 
-    @PUT
+    @POST
     @Path("/{channelId}/initialState/{initialState}")
     @ApiOperation("Sets the initial state for a single channel.")
     @MirthOperation(name = "setChannelInitialState", display = "Set channel initial state", permission = Permissions.CHANNELS_MANAGE)
     public void setChannelInitialState(// @formatter:off
             @Param("channelId") @ApiParam(value = "The ID of the channel.", required = true) @PathParam("channelId") String channelId,
-            @Param("initialState") @ApiParam(value = "The initial state of the channel.", allowableValues = "STARTED, PAUSED, STOPPED", required = true) @PathParam("initialState")  DeployedState initialState) throws ClientException;
+            @Param("initialState") @ApiParam(value = "The initial state of the channel.", allowableValues = "STARTED, PAUSED, STOPPED", required = true) @PathParam("initialState") DeployedState initialState) throws ClientException;
     // @formatter:on
 
     @PUT
@@ -145,4 +151,10 @@ public interface ChannelServletInterface extends BaseServletInterface {
     @ApiOperation("Removes the channels with the specified IDs.")
     @MirthOperation(name = "removeChannels", display = "Remove channels", permission = Permissions.CHANNELS_MANAGE)
     public void removeChannels(@Param("channelIds") @ApiParam(value = "The IDs of the channels to remove.", required = true) @QueryParam("channelId") Set<String> channelIds) throws ClientException;
+
+    @POST
+    @Path("/_removeChannels")
+    @ApiOperation("Removes the channels with the specified IDs. This is a POST request alternative to DELETE /channels that may be used when there are too many channel IDs to include in the query parameters.")
+    @MirthOperation(name = "removeChannels", display = "Remove channels", permission = Permissions.CHANNELS_MANAGE)
+    public void removeChannelsPost(@Param("channelIds") @ApiParam(value = "The IDs of the channels to remove.", required = true) Set<String> channelIds) throws ClientException;
 }
