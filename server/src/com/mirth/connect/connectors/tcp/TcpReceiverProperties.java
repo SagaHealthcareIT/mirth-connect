@@ -87,9 +87,17 @@ public class TcpReceiverProperties extends ConnectorProperties implements Listen
         return sourceConnectorProperties;
     }
 
+    public void setSourceConnectorProperties(SourceConnectorProperties sourceConnectorProperties) {
+        this.sourceConnectorProperties = sourceConnectorProperties;
+    }
+
     @Override
     public ListenerConnectorProperties getListenerConnectorProperties() {
         return listenerConnectorProperties;
+    }
+
+    public void setListenerConnectorProperties(ListenerConnectorProperties listenerConnectorProperties) {
+        this.listenerConnectorProperties = listenerConnectorProperties;
     }
 
     public TransmissionModeProperties getTransmissionModeProperties() {
@@ -296,6 +304,9 @@ public class TcpReceiverProperties extends ConnectorProperties implements Listen
     @Override
     public void migrate3_5_0(DonkeyElement element) {}
 
+    @Override
+    public void migrate3_6_0(DonkeyElement element) {}
+    
     @Override
     public Map<String, Object> getPurgedProperties() {
         Map<String, Object> purgedProperties = super.getPurgedProperties();

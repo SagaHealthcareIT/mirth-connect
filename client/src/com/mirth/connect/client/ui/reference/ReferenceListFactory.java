@@ -12,10 +12,7 @@ package com.mirth.connect.client.ui.reference;
 import japa.parser.JavaParser;
 import japa.parser.ast.CompilationUnit;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -26,15 +23,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.TreeMap;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.regex.Pattern;
 
 import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.io.IOUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 import org.fife.rsta.ac.LanguageSupportFactory;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.reflections.Reflections;
+import org.reflections.scanners.ResourcesScanner;
 
 import com.mirth.connect.client.ui.LoadedExtensions;
 import com.mirth.connect.client.ui.PlatformUI;
@@ -61,6 +57,8 @@ public class ReferenceListFactory {
     private static final CodeTemplateContextSet CONTEXT_BATCH = new CodeTemplateContextSet(ContextType.CHANNEL_BATCH);
     private static final CodeTemplateContextSet CONTEXT_POSTPROCESSOR = new CodeTemplateContextSet(ContextType.GLOBAL_POSTPROCESSOR, ContextType.CHANNEL_POSTPROCESSOR);
     private static final CodeTemplateContextSet CONTEXT_RESPONSE_MAP = new CodeTemplateContextSet(ContextType.GLOBAL_POSTPROCESSOR, ContextType.CHANNEL_POSTPROCESSOR, ContextType.DESTINATION_DISPATCHER, ContextType.DESTINATION_RESPONSE_TRANSFORMER);
+
+    private static final Pattern JAVA_FILE_PATTERN = Pattern.compile(".*\\.java");
 
     private static ReferenceListFactory instance = null;
 
@@ -386,11 +384,25 @@ public class ReferenceListFactory {
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Convert DICOM to Encoded Image as a byte array", "Converts and returns and image as a byte array from an uncompressed DICOM image (imagetype: either TIF,JPEG, BMP, PNG, or RAW). If the slice index is left out, it will default to 1.", "DICOMUtil.convertDICOMToByteArray('${imagetype}', connectorMessage, ${sliceIndex})"));
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Get DICOM image slice count", "Returns the number of image slices within the uncompressed DICOM image", "DICOMUtil.getSliceCount(connectorMessage)"));
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Get DICOM message", "Gets the full DICOM messages with image data", "DICOMUtil.getDICOMMessage(connectorMessage)"));
-        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Add Attachment", "Add attachment (String or byte[]) to message", "function addAttachment(data, type) {}", new CodeTemplateFunctionDefinition("addAttachment", new Parameters("data", "Object", "The data to insert as an attachment. May be a string or byte array.").add("type", "String", "The MIME type of the attachment."), "Attachment", "The inserted Attachment object.")));
-        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Attachments", "Get List of Attachments associated with this message.  This will get all attachments that have been added in the source and destination(s).", "function getAttachments() {}", new CodeTemplateFunctionDefinition("getAttachments", new Parameters(), "List<Attachment>", "A list of Attachment objects associated with this message.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Add Attachment", "Add attachment (String or byte[]) to the current message", "function addAttachment(data, type, base64Encode) {}", new CodeTemplateFunctionDefinition("addAttachment", new Parameters("data", "Object", "The data to insert as an attachment. May be a string or byte array.").add("type", "String", "The MIME type of the attachment.").add("base64Encode", "boolean", "If true, the content will be Base64 encoded for convenience. If the content you're passing in is not already Base64 encoded, you should pass in true for this argument."), "Attachment", "The inserted Attachment object.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Attachments", "Get List of Attachments associated with this message.  This will get all attachments that have been added in the source and destination(s).", "function getAttachments(base64Decode) {}", new CodeTemplateFunctionDefinition("getAttachments", new Parameters("base64Decode", "boolean", "If true, the content of each attachment will first be Base64 decoded for convenience."), "List<Attachment>", "A list of Attachment objects associated with this message.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Single Attachment (any)", "Get a specific Attachment associated with any channel / message.", "function getAttachment(channelId, messageId, attachmentId, base64Decode) {}", new CodeTemplateFunctionDefinition("getAttachment", new Parameters("channelId", "String", "The ID of the channel to retrieve the attachment from.").add("messageId", "Long", "The ID of the message to retrieve the attachment from.").add("attachmentId", "String", "The ID of the attachment to retrieve.").add("base64Decode", "boolean", "If true, the content of the attachment will first be Base64 decoded for convenience."), "Attachment", "The Attachment object associated with the given ID, or null if none was found.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Single Attachment (current message)", "Get a specific Attachment associated with this message.", "function getAttachment(attachmentId, base64Decode) {}", new CodeTemplateFunctionDefinition("getAttachment", new Parameters("attachmentId", "String", "The ID of the attachment to retrieve.").add("base64Decode", "boolean", "If true, the content of the attachment will first be Base64 decoded for convenience."), "Attachment", "The Attachment object associated with the given ID, or null if none was found.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Attachment IDs (any)", "Get a List containing the IDs of all Attachments associated with any channel / message.", "function getAttachmentIds(channelId, messageId) {}", new CodeTemplateFunctionDefinition("getAttachmentIds", new Parameters("channelId", "String", "The ID of the channel associated with the attachments.").add("messageId", "Long", "The ID of the message associated with the attachments."), "List<String>", "A List of attachment IDs associated with the given channel / message.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Get Attachment IDs (current message)", "Get a List containing the IDs of all Attachments associated with this message.", "function getAttachmentIds() {}", new CodeTemplateFunctionDefinition("getAttachmentIds", new Parameters(), "List<String>", "A List of attachment IDs associated with the current channel / message.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Update Attachment (any)", "Updates an attachment associated with any connector message.", "function updateAttachment(channelId, messageId, attachmentId, data, type, base64Encode) {}", new CodeTemplateFunctionDefinition("updateAttachment", new Parameters("channelId", "String", "The ID of the channel the attachment is associated with.").add("messageId", "Long", "The ID of the message the attachment is associated with.").add("attachmentId", "String", "The unique ID of the attachment to update.").add("data", "String / byte[]", "The attachment content (must be a string or byte array).").add("type", "String", "The MIME type of the attachment.").add("base64Encode", "boolean", "If true, the content will be Base64 encoded for convenience. If the content you're passing in is not already Base64 encoded, you should pass in true for this argument."), "Attachment", "The Attachment that was updated.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Update Attachment (any)", "Updates an attachment associated with any connector message.", "function updateAttachment(channelId, messageId, attachment, base64Encode) {}", new CodeTemplateFunctionDefinition("updateAttachment", new Parameters("channelId", "String", "The ID of the channel the attachment is associated with.").add("messageId", "Long", "The ID of the message the attachment is associated with.").add("attachment", "Attachment", "The Attachment object to update.").add("base64Encode", "boolean", "If true, the content will be Base64 encoded for convenience. If the content you're passing in is not already Base64 encoded, you should pass in true for this argument."), "Attachment", "The Attachment that was updated.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Update Attachment (current message)", "Updates an attachment associated with the current connector message.", "function updateAttachment(attachmentId, data, type, base64Encode) {}", new CodeTemplateFunctionDefinition("updateAttachment", new Parameters("attachmentId", "String", "The unique ID of the attachment to update.").add("data", "String / byte[]", "The attachment content (must be a string or byte array).").add("type", "String", "The MIME type of the attachment.").add("base64Encode", "boolean", "If true, the content will be Base64 encoded for convenience. If the content you're passing in is not already Base64 encoded, you should pass in true for this argument."), "Attachment", "The Attachment that was updated.")));
+        addReference(new FunctionReference(CONTEXT_ATTACHMENT, Category.UTILITY.toString(), null, "Update Attachment (current message)", "Updates an attachment associated with the current connector message.", "function updateAttachment(attachment, base64Encode) {}", new CodeTemplateFunctionDefinition("updateAttachment", new Parameters("attachment", "Attachment", "The Attachment object to update.").add("base64Encode", "boolean", "If true, the content will be Base64 encoded for convenience. If the content you're passing in is not already Base64 encoded, you should pass in true for this argument."), "Attachment", "The Attachment that was updated.")));
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Strip Namespaces", "Remove namespaces from an XML string", "var ${newMessage} = ${message}.replace(/xmlns:?[^=]*=[\"\"][^\"\"]*[\"\"]/g, '');\n"));
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Parse HTTP Headers", "Takes the string of an HTTP Response and returns it represented as a map for easy access.", "var ${headers} = HTTPUtil.parseHeaders(${header});"));
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Remove Illegal XML Characters", "Removes illegal XML characters like control characters that cause a parsing error in e4x (\\x00-\\x1F besides TAB, LF, and CR)", "var ${newMessage} = ${message}.replace(/[\\x00-\\x08]|[\\x0B-\\x0C]|[\\x0E-\\x1F]/g, '');\n"));
+        addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Pretty Print XML", "Formats an XML string with indented markup.", "XmlUtil.prettyPrint(${xmlString})"));
+        addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.UTILITY.toString(), "Pretty Print JSON", "Formats an JSON string with indented markup.", "JsonUtil.prettyPrint(${jsonString})"));
+
+        // Conversion references
+        addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.CONVERSION.toString(), "Convert XML to JSON", "Converts an XML string to JSON.", "XmlUtil.toJson(${xmlString})"));
+        addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.CONVERSION.toString(), "Convert JSON to XML", "Converts a JSON string to XML.", "JsonUtil.toXml(${jsonString})"));
 
         // Date references
         addReference(new ParameterizedCodeReference(CONTEXT_GLOBAL, Category.DATE.toString(), "Get Date Object From Pattern", "Parse a date according to specified pattern", "var ${date} = DateUtil.getDate(${pattern}, ${date});"));
@@ -517,49 +529,32 @@ public class ReferenceListFactory {
     private void addUserutilReferences() {
         populateAliases();
 
-        if (Thread.currentThread().getContextClassLoader() instanceof URLClassLoader) {
-            URLClassLoader classLoader = (URLClassLoader) Thread.currentThread().getContextClassLoader();
-            for (URL url : classLoader.getURLs()) {
-                String urlString = url.toString();
-                if (StringUtils.endsWithIgnoreCase(urlString, "userutil-sources.jar")) {
-                    addUserutilReferences(url);
-                }
-            }
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+
+        addUserutilReferences("com.mirth.connect.userutil", classLoader);
+        addUserutilReferences("com.mirth.connect.server.userutil", classLoader);
+
+        for (String packageName : LoadedExtensions.getInstance().getUserutilPackages()) {
+            addUserutilReferences(packageName, classLoader);
         }
     }
 
-    private void addUserutilReferences(URL url) {
-        InputStream inputStream = null;
+    private void addUserutilReferences(String packageName, ClassLoader classLoader) {
+        for (String file : new Reflections(packageName, new ResourcesScanner()).getResources(JAVA_FILE_PATTERN)) {
+            addUserutilReferences(file, classLoader.getResourceAsStream(file));
+        }
+    }
 
+    private void addUserutilReferences(String fileName, InputStream is) {
         try {
-            inputStream = url.openStream();
-            ZipInputStream zis = new ZipInputStream(inputStream);
-            ZipEntry zipEntry;
-            Map<String, InputStream> entryMap = new HashMap<String, InputStream>();
-
-            // Iterate through each entry in the JAR file
-            while ((zipEntry = zis.getNextEntry()) != null) {
-                if (!zipEntry.isDirectory() && StringUtils.endsWithIgnoreCase(zipEntry.getName(), ".java")) {
-                    entryMap.put(zipEntry.getName(), new ByteArrayInputStream(IOUtils.toByteArray(zis)));
-                }
-            }
-
-            for (Entry<String, InputStream> entry : entryMap.entrySet()) {
-                try {
-                    // Parse the source file
-                    CompilationUnit compilationUnit = JavaParser.parse(entry.getValue());
-                    // Determine any runtime aliases for the class
-                    List<String> inputTextList = aliasMap.get(entry.getKey().replaceAll("\\.java$", "").replace('/', '.'));
-                    // Create and add references for the parsed source file
-                    addReferences(ClassVisitor.getReferencesByCompilationUnit(compilationUnit, inputTextList));
-                } catch (Exception e) {
-                    logger.error("Unable to load references from userutil entry " + entry.getKey(), e);
-                }
-            }
+            // Parse the source file
+            CompilationUnit compilationUnit = JavaParser.parse(is);
+            // Determine any runtime aliases for the class
+            List<String> inputTextList = aliasMap.get(fileName.replaceAll("\\.java$", "").replace('/', '.'));
+            // Create and add references for the parsed source file
+            addReferences(ClassVisitor.getReferencesByCompilationUnit(compilationUnit, inputTextList));
         } catch (Exception e) {
-            logger.error("Error occurred while scanning for userutil references.", e);
-        } finally {
-            IOUtils.closeQuietly(inputStream);
+            logger.error("Unable to load references from userutil entry " + fileName, e);
         }
     }
 

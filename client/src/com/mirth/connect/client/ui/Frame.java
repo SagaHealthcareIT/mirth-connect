@@ -411,6 +411,8 @@ public class Frame extends JXFrame {
         // Now it's okay to start the plugins
         LoadedExtensions.getInstance().startPlugins();
 
+        mirthClient.setRecorder(LoadedExtensions.getInstance().getRecorder());
+
         statusBar = new StatusBar();
         statusBar.setBorder(BorderFactory.createEmptyBorder());
 
@@ -2245,6 +2247,12 @@ public class Frame extends JXFrame {
             public void done() {
                 if (status != null) {
                     TableState tableState = dashboardPanel.getCurrentTableState();
+                    /*
+                     * The channel group cache could be out of date, so after we have the completed
+                     * list of statuses, make sure any previously unknown channel IDs are added to
+                     * the default group.
+                     */
+                    channelPanel.updateDefaultChannelGroup(status);
                     dashboardPanel.finishUpdatingTable(status, channelPanel.getCachedGroupStatuses().values(), deployedChannelCount);
                     dashboardPanel.updateTableState(tableState);
                 }

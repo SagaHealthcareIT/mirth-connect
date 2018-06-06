@@ -541,7 +541,7 @@ public class CommandLineInterface {
         out.println("deploy [timeout]\n\tDeploys all Channels with optional timeout (in seconds)\n");
         out.println("import \"path\" [force]\n\tImports channel specified by <path>.  Optional 'force' overwrites existing channels.\n");
         out.println("export id|\"name\"|* \"path\"\n\tExports the specified channel to <path>\n");
-        out.println("importcfg \"path\" [nodeploy]\n\tImports configuration specified by <path>.  Optional 'nodeploy' stops channels from being deployed after importing.\n");
+        out.println("importcfg \"path\" [nodeploy] [overwriteconfigmap]\n\tImports configuration specified by <path>.  Optional 'nodeploy' stops channels from being deployed after importing.  Optional 'overwriteconfigmap' will overwrite the Configuration Map.\n");
         out.println("exportcfg \"path\"\n\tExports the configuration to <path>\n");
         out.println("importalert \"path\" [force]\n\tImports alert specified by <path>.  Optional 'force' overwrites existing alerts.\n");
         out.println("exportalert id|\"name\"|* \"path\"\n\tExports the specified alert to <path>\n");
@@ -764,15 +764,30 @@ public class CommandLineInterface {
 
         String path = arguments[1].getText();
         File fXml = new File(path);
+
         boolean deploy = true;
-        if (arguments.length >= 3 && arguments[2] == Token.NODEPLOY) {
-            deploy = false;
+        boolean overwriteConfigMap = false;
+
+        if (arguments.length >= 3) {
+            if (arguments[2] == Token.NODEPLOY) {
+                deploy = false;
+            } else if (arguments[2] == Token.OVERWRITECONFIGMAP) {
+                overwriteConfigMap = true;
+            }
+
+            if (arguments.length >= 4) {
+                if (arguments[3] == Token.NODEPLOY) {
+                    deploy = false;
+                } else if (arguments[3] == Token.OVERWRITECONFIGMAP) {
+                    overwriteConfigMap = true;
+                }
+            }
         }
 
         ObjectXMLSerializer serializer = ObjectXMLSerializer.getInstance();
 
         try {
-            client.setServerConfiguration(serializer.deserialize(FileUtils.readFileToString(fXml), ServerConfiguration.class), deploy);
+            client.setServerConfiguration(serializer.deserialize(FileUtils.readFileToString(fXml), ServerConfiguration.class), deploy, overwriteConfigMap);
         } catch (IOException e) {
             error("cannot read " + path, e);
             return;
@@ -1661,7 +1676,12 @@ public class CommandLineInterface {
             channelIds.add(channel.getId());
         }
 
-        client.deployChannels(channelIds);
+        // Only deploy if the wildcard is being used, or if any channels were actually matched
+        if (CollectionUtils.isNotEmpty(channelIds) || arguments[2] == Token.WILDCARD) {
+            client.deployChannels(channelIds);
+        } else {
+            out.println("No channels matched ID or name \"" + arguments[2].getText() + "\".");
+        }
     }
 
     private void commandChannelUndeploy(Token[] arguments) throws ClientException {
@@ -1671,7 +1691,12 @@ public class CommandLineInterface {
             channelIds.add(channel.getId());
         }
 
-        client.undeployChannels(channelIds);
+        // Only undeploy if the wildcard is being used, or if any channels were actually matched
+        if (CollectionUtils.isNotEmpty(channelIds) || arguments[2] == Token.WILDCARD) {
+            client.undeployChannels(channelIds);
+        } else {
+            out.println("No channels matched ID or name \"" + arguments[2].getText() + "\".");
+        }
     }
 
     /**

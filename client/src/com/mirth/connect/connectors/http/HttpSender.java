@@ -20,6 +20,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.prefs.Preferences;
 
 import javax.swing.ImageIcon;
@@ -135,6 +136,8 @@ public class HttpSender extends ConnectorSettingsPanel {
             properties.setMethod("put");
         } else if (deleteButton.isSelected()) {
             properties.setMethod("delete");
+        } else if (patchButton.isSelected()) {
+            properties.setMethod("patch");
         }
 
         properties.setMultipart(multipartYesButton.isSelected());
@@ -202,6 +205,9 @@ public class HttpSender extends ConnectorSettingsPanel {
         } else if (props.getMethod().equalsIgnoreCase("delete")) {
             deleteButton.setSelected(true);
             deleteButtonActionPerformed(null);
+        } else if (props.getMethod().equalsIgnoreCase("patch")) {
+            patchButton.setSelected(true);
+            patchButtonActionPerformed(null);
         }
 
         if (props.isMultipart()) {
@@ -301,9 +307,9 @@ public class HttpSender extends ConnectorSettingsPanel {
         queryParametersTable = new MirthTable();
 
         int j = 0;
-        Iterator i = properties.entrySet().iterator();
+        Iterator<Entry<String, List<String>>> i = properties.entrySet().iterator();
         while (i.hasNext()) {
-            Map.Entry entry = (Map.Entry) i.next();
+            Entry<String, List<String>> entry = (Entry<String, List<String>>) i.next();
 
             for (String keyValue : (ArrayList<String>) entry.getValue()) {
                 tableData[j][NAME_COLUMN] = (String) entry.getKey();
@@ -397,9 +403,9 @@ public class HttpSender extends ConnectorSettingsPanel {
         headersTable = new MirthTable();
 
         int j = 0;
-        Iterator i = properties.entrySet().iterator();
+        Iterator<Entry<String, List<String>>> i = properties.entrySet().iterator();
         while (i.hasNext()) {
-            Map.Entry entry = (Map.Entry) i.next();
+        	Entry<String, List<String>> entry = (Entry<String, List<String>>) i.next();
             for (String keyValue : (List<String>) entry.getValue()) {
                 tableData[j][NAME_COLUMN] = (String) entry.getKey();
                 tableData[j][VALUE_COLUMN] = keyValue;
@@ -583,24 +589,17 @@ public class HttpSender extends ConnectorSettingsPanel {
             }
         }
 
-        if (props.getMethod().equalsIgnoreCase("post") || props.getMethod().equalsIgnoreCase("put")) {
-            if (props.getContentType().length() == 0) {
+        if (props.getMethod().equalsIgnoreCase("post") || props.getMethod().equalsIgnoreCase("put") || props.getMethod().equalsIgnoreCase("patch")) {
+        	if (props.getContentType().length() == 0) {
                 valid = false;
                 if (highlight) {
                     contentTypeField.setBackground(UIConstants.INVALID_COLOR);
                 }
             }
-
+        	
             if (isUsingFormUrlEncoded(props.getContentType())) {
                 if (MapUtils.isEmpty(props.getParameters())) {
                     valid = false;
-                }
-            } else {
-                if (props.getContent().length() == 0) {
-                    valid = false;
-                    if (highlight) {
-                        contentTextArea.setBackground(UIConstants.INVALID_COLOR);
-                    }
                 }
             }
         }
@@ -674,7 +673,7 @@ public class HttpSender extends ConnectorSettingsPanel {
     }
 
     private void checkContentEnabled() {
-        if (postButton.isSelected() || putButton.isSelected()) {
+        if (postButton.isSelected() || putButton.isSelected() || patchButton.isSelected()) {
             contentTypeLabel.setEnabled(true);
             contentTypeField.setEnabled(true);
 
@@ -837,6 +836,7 @@ public class HttpSender extends ConnectorSettingsPanel {
         responseBinaryMimeTypesLabel = new javax.swing.JLabel();
         responseBinaryMimeTypesField = new com.mirth.connect.client.ui.components.MirthTextField();
         responseBinaryMimeTypesRegexCheckBox = new com.mirth.connect.client.ui.components.MirthCheckBox();
+        patchButton = new com.mirth.connect.client.ui.components.MirthRadioButton();
 
         setBackground(new java.awt.Color(255, 255, 255));
         setBorder(javax.swing.BorderFactory.createEmptyBorder(1, 1, 1, 1));
@@ -1152,6 +1152,17 @@ public class HttpSender extends ConnectorSettingsPanel {
         responseBinaryMimeTypesRegexCheckBox.setText("Regular Expression");
         responseBinaryMimeTypesRegexCheckBox.setToolTipText("<html>When a response comes in with a Content-Type header that<br/>matches one of these entries, the content will be encoded<br/>into a Base64 string. If Regular Expression is unchecked,<br/>specify multiple entries with commas. Otherwise, enter a<br/>valid regular expression to match MIME types against.</html>");
 
+        patchButton.setBackground(new java.awt.Color(255, 255, 255));
+        methodButtonGroup.add(patchButton);
+        patchButton.setText("PATCH");
+        patchButton.setToolTipText("Selects the HTTP operation used to send each message.");
+        patchButton.setMargin(new java.awt.Insets(0, 0, 0, 0));
+        patchButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                patchButtonActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
         this.setLayout(layout);
         layout.setHorizontalGroup(
@@ -1206,7 +1217,7 @@ public class HttpSender extends ConnectorSettingsPanel {
                             .addComponent(charsetEncodingCombobox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                             .addGroup(layout.createSequentialGroup()
                                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING, false)
-                                    .addComponent(responseBinaryMimeTypesField, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                    .addComponent(responseBinaryMimeTypesField, javax.swing.GroupLayout.DEFAULT_SIZE, 312, Short.MAX_VALUE)
                                     .addGroup(javax.swing.GroupLayout.Alignment.LEADING, layout.createSequentialGroup()
                                         .addComponent(includeMetadataYesRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
@@ -1227,20 +1238,12 @@ public class HttpSender extends ConnectorSettingsPanel {
                                     .addComponent(passwordField, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE)
                                     .addComponent(sendTimeoutField, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, 75, javax.swing.GroupLayout.PREFERRED_SIZE)
                                     .addGroup(javax.swing.GroupLayout.Alignment.LEADING, layout.createSequentialGroup()
-                                        .addComponent(postButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                        .addComponent(getButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                        .addComponent(putButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                        .addComponent(deleteButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                                    .addGroup(javax.swing.GroupLayout.Alignment.LEADING, layout.createSequentialGroup()
                                         .addComponent(multipartYesButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                                         .addComponent(multipartNoButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                                     .addComponent(proxyAddressField, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, 202, javax.swing.GroupLayout.PREFERRED_SIZE)
                                     .addComponent(proxyPortField, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, 56, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                    .addComponent(urlField, javax.swing.GroupLayout.DEFAULT_SIZE, 300, Short.MAX_VALUE)
+                                    .addComponent(urlField, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                                     .addGroup(javax.swing.GroupLayout.Alignment.LEADING, layout.createSequentialGroup()
                                         .addComponent(authenticationTypeBasicRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
@@ -1254,7 +1257,17 @@ public class HttpSender extends ConnectorSettingsPanel {
                                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                                     .addComponent(testConnection)
-                                    .addComponent(responseBinaryMimeTypesRegexCheckBox, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))))
+                                    .addComponent(responseBinaryMimeTypesRegexCheckBox, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                            .addGroup(layout.createSequentialGroup()
+                                .addComponent(postButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(getButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(putButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(deleteButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(patchButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
                         .addGap(0, 0, Short.MAX_VALUE)))
                 .addContainerGap())
         );
@@ -1287,7 +1300,8 @@ public class HttpSender extends ConnectorSettingsPanel {
                     .addComponent(postButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(getButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
                     .addComponent(putButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(deleteButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(deleteButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(patchButton, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(multipartLabel)
@@ -1424,6 +1438,12 @@ public class HttpSender extends ConnectorSettingsPanel {
         setQueryParametersEnabled(true);
     }//GEN-LAST:event_deleteButtonActionPerformed
 
+    private void patchButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_patchButtonActionPerformed
+        checkMultipartEnabled();
+    	checkContentEnabled();
+    	setQueryParametersEnabled(true);
+    }//GEN-LAST:event_patchButtonActionPerformed
+
     private void testConnectionActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_testConnectionActionPerformed
         ResponseHandler handler = new ResponseHandler() {
             @Override
@@ -1519,7 +1539,7 @@ public class HttpSender extends ConnectorSettingsPanel {
     }//GEN-LAST:event_dataTypeBinaryRadioActionPerformed
 
     private void dataTypeTextRadioActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_dataTypeTextRadioActionPerformed
-        if (postButton.isSelected() || putButton.isSelected()) {
+        if (postButton.isSelected() || putButton.isSelected() || patchButton.isSelected()) {
             charsetEncodingLabel.setEnabled(true);
             charsetEncodingCombobox.setEnabled(true);
         }
@@ -1568,6 +1588,7 @@ public class HttpSender extends ConnectorSettingsPanel {
     private com.mirth.connect.client.ui.components.MirthRadioButton parseMultipartYesRadio;
     private com.mirth.connect.client.ui.components.MirthPasswordField passwordField;
     private javax.swing.JLabel passwordLabel;
+    private com.mirth.connect.client.ui.components.MirthRadioButton patchButton;
     private com.mirth.connect.client.ui.components.MirthRadioButton postButton;
     private com.mirth.connect.client.ui.components.MirthTextField proxyAddressField;
     private javax.swing.JLabel proxyAddressLabel;

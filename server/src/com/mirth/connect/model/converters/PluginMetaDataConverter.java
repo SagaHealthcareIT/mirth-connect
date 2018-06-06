@@ -41,34 +41,36 @@ public class PluginMetaDataConverter extends ReflectionConverter {
 
     @Override
     public Object unmarshal(HierarchicalStreamReader reader, UnmarshallingContext context) {
-        DonkeyElement pluginMetaDataElement = new DonkeyElement((Element) ((DocumentReader) reader).getCurrent());
+        if (reader.underlyingReader() instanceof DocumentReader) {
+            DonkeyElement pluginMetaDataElement = new DonkeyElement((Element) ((DocumentReader) reader.underlyingReader()).getCurrent());
 
-        DonkeyElement serverClassesElement = pluginMetaDataElement.getChildElement("serverClasses");
+            DonkeyElement serverClassesElement = pluginMetaDataElement.getChildElement("serverClasses");
 
-        if (serverClassesElement != null) {
-            for (DonkeyElement childElement : serverClassesElement.getChildElements()) {
-                if (childElement.getNodeName().equals("string")) {
-                    convertStringToPluginClass(childElement);
+            if (serverClassesElement != null) {
+                for (DonkeyElement childElement : serverClassesElement.getChildElements()) {
+                    if (childElement.getNodeName().equals("string")) {
+                        convertStringToPluginClass(childElement);
+                    }
                 }
             }
-        }
 
-        DonkeyElement clientClassesElement = pluginMetaDataElement.getChildElement("clientClasses");
+            DonkeyElement clientClassesElement = pluginMetaDataElement.getChildElement("clientClasses");
 
-        if (clientClassesElement != null) {
-            for (DonkeyElement childElement : clientClassesElement.getChildElements()) {
-                if (childElement.getNodeName().equals("string")) {
-                    convertStringToPluginClass(childElement);
+            if (clientClassesElement != null) {
+                for (DonkeyElement childElement : clientClassesElement.getChildElements()) {
+                    if (childElement.getNodeName().equals("string")) {
+                        convertStringToPluginClass(childElement);
+                    }
                 }
             }
-        }
 
-        DonkeyElement controllerClassesElement = pluginMetaDataElement.getChildElement("controllerClasses");
+            DonkeyElement controllerClassesElement = pluginMetaDataElement.getChildElement("controllerClasses");
 
-        if (controllerClassesElement != null) {
-            for (DonkeyElement childElement : controllerClassesElement.getChildElements()) {
-                if (childElement.getNodeName().equals("string")) {
-                    convertStringToPluginClass(childElement);
+            if (controllerClassesElement != null) {
+                for (DonkeyElement childElement : controllerClassesElement.getChildElements()) {
+                    if (childElement.getNodeName().equals("string")) {
+                        convertStringToPluginClass(childElement);
+                    }
                 }
             }
         }
@@ -80,10 +82,12 @@ public class PluginMetaDataConverter extends ReflectionConverter {
         // Extract class metadata
         String className = stringElement.getTextContent();
         String weight = stringElement.getAttribute("weight");
+        String conditionClass = stringElement.getAttribute("conditionClass");
 
         // Clear node attributes and value
         stringElement.setTextContent(null);
         stringElement.removeAttribute("weight");
+        stringElement.removeAttribute("conditionClass");
 
         // Update node name
         stringElement.setNodeName("pluginClass");
@@ -92,6 +96,9 @@ public class PluginMetaDataConverter extends ReflectionConverter {
         // Add the plugin weight if it exists.
         if (StringUtils.isNotBlank(weight)) {
             stringElement.addChildElement("weight", weight);
+        }
+        if (StringUtils.isNotBlank(conditionClass)) {
+            stringElement.addChildElement("conditionClass", conditionClass);
         }
     }
 }

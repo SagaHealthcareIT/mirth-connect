@@ -64,6 +64,7 @@ import org.apache.commons.lang3.time.DateUtils;
 import org.apache.commons.mail.Email;
 import org.apache.commons.mail.EmailException;
 import org.apache.commons.mail.SimpleEmail;
+import org.apache.ibatis.session.SqlSession;
 import org.apache.log4j.Logger;
 import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -78,39 +79,30 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
+import com.google.common.base.Strings;
 import com.mirth.commons.encryption.Digester;
 import com.mirth.commons.encryption.Encryptor;
 import com.mirth.commons.encryption.KeyEncryptor;
 import com.mirth.commons.encryption.Output;
 import com.mirth.connect.client.core.ControllerException;
-import com.mirth.connect.donkey.server.StartException;
-import com.mirth.connect.donkey.server.StopException;
 import com.mirth.connect.donkey.server.data.DonkeyStatisticsUpdater;
 import com.mirth.connect.donkey.util.DonkeyElement;
 import com.mirth.connect.model.Channel;
 import com.mirth.connect.model.ChannelDependency;
-import com.mirth.connect.model.ChannelGroup;
 import com.mirth.connect.model.ChannelMetadata;
 import com.mirth.connect.model.ChannelTag;
 import com.mirth.connect.model.DatabaseSettings;
 import com.mirth.connect.model.DriverInfo;
 import com.mirth.connect.model.EncryptionSettings;
-import com.mirth.connect.model.LibraryProperties;
 import com.mirth.connect.model.PasswordRequirements;
 import com.mirth.connect.model.PluginMetaData;
 import com.mirth.connect.model.ResourceProperties;
 import com.mirth.connect.model.ResourcePropertiesList;
 import com.mirth.connect.model.ServerConfiguration;
-import com.mirth.connect.model.ServerEventContext;
 import com.mirth.connect.model.ServerSettings;
 import com.mirth.connect.model.UpdateSettings;
-import com.mirth.connect.model.alert.AlertModel;
-import com.mirth.connect.model.codetemplates.CodeTemplate;
-import com.mirth.connect.model.codetemplates.CodeTemplateLibrary;
 import com.mirth.connect.model.converters.DocumentSerializer;
 import com.mirth.connect.model.converters.ObjectXMLSerializer;
-import com.mirth.connect.plugins.MergePropertiesInterface;
-import com.mirth.connect.plugins.ServicePlugin;
 import com.mirth.connect.plugins.directoryresource.DirectoryResourceProperties;
 import com.mirth.connect.server.ExtensionLoader;
 import com.mirth.connect.server.mybatis.KeyValuePair;
@@ -119,6 +111,7 @@ import com.mirth.connect.server.util.DatabaseUtil;
 import com.mirth.connect.server.util.PasswordRequirementsChecker;
 import com.mirth.connect.server.util.ResourceUtil;
 import com.mirth.connect.server.util.SqlConfig;
+import com.mirth.connect.server.util.StatementLock;
 import com.mirth.connect.util.ChannelDependencyException;
 import com.mirth.connect.util.ChannelDependencyGraph;
 import com.mirth.connect.util.ConfigurationProperty;
@@ -137,6 +130,7 @@ public class DefaultConfigurationController extends ConfigurationController {
     public static final String PROPERTIES_CHANNEL_METADATA = "channelMetadata";
     public static final String PROPERTIES_CHANNEL_TAGS = "channelTags";
     public static final String SECRET_KEY_ALIAS = "encryption";
+    private static final String VACUUM_LOCK_STATEMENT_ID = "Configuration.vacuumConfigurationTable";
 
     private Logger logger = Logger.getLogger(this.getClass());
     private String appDataDir = null;
@@ -147,6 +141,7 @@ public class DefaultConfigurationController extends ConfigurationController {
     private int status = ConfigurationController.STATUS_UNAVAILABLE;
     private ScriptController scriptController = ControllerFactory.getFactory().createScriptController();
     private PasswordRequirements passwordRequirements;
+    private int maxInactiveSessionInterval;
     private String[] httpsClientProtocols;
     private String[] httpsServerProtocols;
     private String[] httpsCipherSuites;
@@ -159,6 +154,7 @@ public class DefaultConfigurationController extends ConfigurationController {
     private static DatabaseSettings databaseConfig;
     private static String apiBypassword;
     private static int statsUpdateInterval;
+    private volatile boolean configMapLoaded = false;
 
     private static KeyEncryptor encryptor = null;
     private static Digester digester = null;
@@ -167,6 +163,8 @@ public class DefaultConfigurationController extends ConfigurationController {
     private static final String PROPERTY_TEMP_DIR = "dir.tempdata";
     private static final String PROPERTY_APP_DATA_DIR = "dir.appdata";
     private static final String CONFIGURATION_MAP_PATH = "configurationmap.path";
+    private static final String CONFIGURATION_MAP_LOCATION = "configurationmap.location";
+    private static final String MAX_INACTIVE_SESSION_INTERVAL = "server.api.sessionmaxinactiveinterval";
     private static final String HTTPS_CLIENT_PROTOCOLS = "https.client.protocols";
     private static final String HTTPS_SERVER_PROTOCOLS = "https.server.protocols";
     private static final String HTTPS_CIPHER_SUITES = "https.ciphersuites";
@@ -253,6 +251,12 @@ public class DefaultConfigurationController extends ConfigurationController {
                 System.setProperty(CHARSET, mirthConfig.getString(CHARSET));
             }
 
+            // Default value is 72 hours (3 days), minimum is 1 minute
+            maxInactiveSessionInterval = NumberUtils.toInt(mirthConfig.getString(MAX_INACTIVE_SESSION_INTERVAL), 259200);
+            if (maxInactiveSessionInterval < 60) {
+                maxInactiveSessionInterval = 60;
+            }
+
             String[] httpsClientProtocolsArray = mirthConfig.getStringArray(HTTPS_CLIENT_PROTOCOLS);
             if (ArrayUtils.isNotEmpty(httpsClientProtocolsArray)) {
                 // Support both comma separated and multiline values
@@ -296,8 +300,7 @@ public class DefaultConfigurationController extends ConfigurationController {
 
             // Check for server GUID and generate a new one if it doesn't exist
             PropertiesConfiguration serverIdConfig = new PropertiesConfiguration(new File(getApplicationDataDir(), "server.id"));
-
-            if ((serverIdConfig.getString("server.id") != null) && (serverIdConfig.getString("server.id").length() > 0)) {
+            if (!mirthConfig.getBoolean("server.id.ephemeral", false) && serverIdConfig.getString("server.id") != null && serverIdConfig.getString("server.id").length() > 0) {
                 serverId = serverIdConfig.getString("server.id");
             } else {
                 serverId = generateGuid();
@@ -315,34 +318,36 @@ public class DefaultConfigurationController extends ConfigurationController {
 
             statsUpdateInterval = NumberUtils.toInt(mirthConfig.getString(STATS_UPDATE_INTERVAL), DonkeyStatisticsUpdater.DEFAULT_UPDATE_INTERVAL);
 
-            // Check for configuration map properties
-            if (mirthConfig.getString(CONFIGURATION_MAP_PATH) != null) {
-                configurationFile = mirthConfig.getString(CONFIGURATION_MAP_PATH);
-            } else {
-                configurationFile = getApplicationDataDir() + File.separator + "configuration.properties";
+            if (Strings.isNullOrEmpty(mirthConfig.getString(CONFIGURATION_MAP_LOCATION)) || "file".equals(mirthConfig.getString(CONFIGURATION_MAP_LOCATION))) {
+                PropertiesConfiguration configurationMapProperties = new PropertiesConfiguration();
+                configurationMapProperties.setDelimiterParsingDisabled(true);
+                configurationMapProperties.setListDelimiter((char) 0);
+                // Check for configuration map properties
+                if (mirthConfig.getString(CONFIGURATION_MAP_PATH) != null) {
+                    configurationFile = mirthConfig.getString(CONFIGURATION_MAP_PATH);
+                } else {
+                    configurationFile = getApplicationDataDir() + File.separator + "configuration.properties";
+                }
+                try {
+                    configurationMapProperties.load(new File(configurationFile));
+                    configMapLoaded = true;
+                } catch (ConfigurationException e) {
+                    logger.warn("Failed to find configuration map file");
+                }
+
+                Map<String, ConfigurationProperty> configurationMap = new HashMap<String, ConfigurationProperty>();
+                Iterator<String> iterator = configurationMapProperties.getKeys();
+
+                while (iterator.hasNext()) {
+                    String key = iterator.next();
+                    String value = configurationMapProperties.getString(key);
+                    String comment = configurationMapProperties.getLayout().getCanonicalComment(key, false);
+
+                    configurationMap.put(key, new ConfigurationProperty(value, comment));
+                }
+
+                setConfigurationProperties(configurationMap, false);
             }
-
-            PropertiesConfiguration configurationMapProperties = new PropertiesConfiguration();
-            configurationMapProperties.setDelimiterParsingDisabled(true);
-            configurationMapProperties.setListDelimiter((char) 0);
-            try {
-                configurationMapProperties.load(new File(configurationFile));
-            } catch (ConfigurationException e) {
-                logger.warn("Failed to find configuration map file");
-            }
-
-            Map<String, ConfigurationProperty> configurationMap = new HashMap<String, ConfigurationProperty>();
-            Iterator<String> iterator = configurationMapProperties.getKeys();
-
-            while (iterator.hasNext()) {
-                String key = iterator.next();
-                String value = configurationMapProperties.getString(key);
-                String comment = configurationMapProperties.getLayout().getCanonicalComment(key, false);
-
-                configurationMap.put(key, new ConfigurationProperty(value, comment));
-            }
-
-            setConfigurationProperties(configurationMap, false);
         } catch (Exception e) {
             logger.error("Failed to initialize configuration controller", e);
         }
@@ -521,6 +526,11 @@ public class DefaultConfigurationController extends ConfigurationController {
     }
 
     @Override
+    public int getMaxInactiveSessionInterval() {
+        return maxInactiveSessionInterval;
+    }
+
+    @Override
     public String[] getHttpsClientProtocols() {
         return ArrayUtils.clone(httpsClientProtocols);
     }
@@ -604,179 +614,22 @@ public class DefaultConfigurationController extends ConfigurationController {
         serverConfiguration.setResourceProperties(ObjectXMLSerializer.getInstance().deserialize(getResources(), ResourcePropertiesList.class));
         serverConfiguration.setChannelDependencies(getChannelDependencies());
 
+        serverConfiguration.setConfigurationMap(getConfigurationProperties());
+
         return serverConfiguration;
     }
 
     @Override
-    public void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy) throws StartException, StopException, ControllerException, InterruptedException {
+    public void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy, boolean overwriteConfigMap) throws ControllerException {
         ChannelController channelController = ControllerFactory.getFactory().createChannelController();
         AlertController alertController = ControllerFactory.getFactory().createAlertController();
         CodeTemplateController codeTemplateController = ControllerFactory.getFactory().createCodeTemplateController();
         EngineController engineController = ControllerFactory.getFactory().createEngineController();
+        ExtensionController extensionController = ControllerFactory.getFactory().createExtensionController();
+        ContextFactoryController contextFactoryController = ControllerFactory.getFactory().createContextFactoryController();
 
-        /*
-         * Make sure users aren't deploying or undeploying channels while the server configuration
-         * is being restored.
-         */
-        synchronized (engineController) {
-            Set<ChannelGroup> channelGroups = new HashSet<ChannelGroup>();
-            if (serverConfiguration.getChannelGroups() != null) {
-                channelGroups.addAll(serverConfiguration.getChannelGroups());
-            }
-            channelController.updateChannelGroups(channelGroups, new HashSet<String>(), true);
-
-            if (serverConfiguration.getChannels() != null) {
-                // Undeploy all channels before updating or removing them
-                engineController.undeployChannels(engineController.getDeployedIds(), ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, null);
-
-                // Remove channels that don't exist in the new configuration
-                for (Channel channel : channelController.getChannels(null)) {
-                    boolean found = false;
-
-                    for (Channel newChannel : serverConfiguration.getChannels()) {
-                        if (newChannel.getId().equals(channel.getId())) {
-                            found = true;
-                        }
-                    }
-
-                    if (!found) {
-                        channelController.removeChannel(channel, ServerEventContext.SYSTEM_USER_EVENT_CONTEXT);
-                    }
-                }
-
-                // Update all channels from the server configuration
-                for (Channel channel : serverConfiguration.getChannels()) {
-                    channelController.updateChannel(channel, ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, true);
-                }
-            }
-
-            if (serverConfiguration.getAlerts() != null) {
-                // Remove all existing alerts
-                for (AlertModel alert : alertController.getAlerts()) {
-                    alertController.removeAlert(alert.getId());
-                }
-
-                for (AlertModel alert : serverConfiguration.getAlerts()) {
-                    alertController.updateAlert(alert);
-                }
-            }
-
-            if (serverConfiguration.getCodeTemplateLibraries() != null) {
-                List<CodeTemplateLibrary> clonedLibraries = new ArrayList<CodeTemplateLibrary>();
-                for (CodeTemplateLibrary library : serverConfiguration.getCodeTemplateLibraries()) {
-                    clonedLibraries.add(new CodeTemplateLibrary(library));
-                }
-
-                // Update all libraries from the server configuration
-                codeTemplateController.updateLibraries(clonedLibraries, ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, true);
-
-                // Remove code templates that don't exist in the new configuration
-                for (CodeTemplate codeTemplate : codeTemplateController.getCodeTemplates(null)) {
-                    boolean found = false;
-
-                    for (CodeTemplateLibrary newLibrary : serverConfiguration.getCodeTemplateLibraries()) {
-                        if (newLibrary.getCodeTemplates() != null) {
-                            for (CodeTemplate newCodeTemplate : newLibrary.getCodeTemplates()) {
-                                if (newCodeTemplate.getId().equals(codeTemplate.getId())) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (found) {
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        codeTemplateController.removeCodeTemplate(codeTemplate.getId(), ServerEventContext.SYSTEM_USER_EVENT_CONTEXT);
-                    }
-                }
-
-                // Update all code templates from the server configuration
-                for (CodeTemplateLibrary library : serverConfiguration.getCodeTemplateLibraries()) {
-                    if (library.getCodeTemplates() != null) {
-                        for (CodeTemplate codeTemplate : library.getCodeTemplates()) {
-                            codeTemplateController.updateCodeTemplate(codeTemplate, ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, true);
-                        }
-                    }
-                }
-            }
-
-            if (serverConfiguration.getServerSettings() != null) {
-                // The server name must not be restored.
-                ServerSettings serverSettings = serverConfiguration.getServerSettings();
-                serverSettings.setServerName(null);
-
-                setServerSettings(serverSettings);
-            }
-
-            if (serverConfiguration.getUpdateSettings() != null) {
-                setUpdateSettings(serverConfiguration.getUpdateSettings());
-            }
-
-            // Set the properties for all plugins in the server configuration,
-            // whether or not the plugin is actually installed on this server.
-            if (serverConfiguration.getPluginProperties() != null) {
-                ExtensionController extensionController = ControllerFactory.getFactory().createExtensionController();
-
-                for (Entry<String, Properties> pluginEntry : serverConfiguration.getPluginProperties().entrySet()) {
-                    String pluginName = pluginEntry.getKey();
-                    Properties properties = pluginEntry.getValue();
-
-                    try {
-                        // Allow the plugin to modify the properties first if it needs to
-                        ServicePlugin servicePlugin = extensionController.getServicePlugins().get(pluginName);
-                        if (servicePlugin != null && servicePlugin instanceof MergePropertiesInterface) {
-                            ((MergePropertiesInterface) servicePlugin).modifyPropertiesOnRestore(properties);
-                        }
-
-                        extensionController.setPluginProperties(pluginName, properties);
-                    } catch (Exception e) {
-                        logger.error("Error restoring " + pluginName + " properties.", e);
-                    }
-                }
-            }
-
-            if (serverConfiguration.getResourceProperties() != null) {
-                setResources(ObjectXMLSerializer.getInstance().serialize(serverConfiguration.getResourceProperties()));
-
-                try {
-                    List<LibraryProperties> libraryResources = new ArrayList<LibraryProperties>();
-                    for (ResourceProperties resource : serverConfiguration.getResourceProperties().getList()) {
-                        if (resource instanceof LibraryProperties) {
-                            libraryResources.add((LibraryProperties) resource);
-                        }
-                    }
-
-                    ControllerFactory.getFactory().createContextFactoryController().updateResources(libraryResources, false);
-                } catch (Exception e) {
-                    logger.error("Unable to update libraries: " + e.getMessage(), e);
-                }
-            }
-
-            if (serverConfiguration.getChannelDependencies() != null) {
-                setChannelDependencies(serverConfiguration.getChannelDependencies());
-            } else {
-                setChannelDependencies(new HashSet<ChannelDependency>());
-            }
-
-            if (serverConfiguration.getChannelTags() != null) {
-                setChannelTags(serverConfiguration.getChannelTags());
-            } else {
-                setChannelTags(new HashSet<ChannelTag>());
-            }
-
-            if (serverConfiguration.getGlobalScripts() != null) {
-                scriptController.setGlobalScripts(serverConfiguration.getGlobalScripts());
-            }
-
-            // Deploy all channels
-            if (deploy) {
-                engineController.deployChannels(channelController.getChannelIds(), ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, null);
-            }
-        }
+        ServerConfigurationRestorer restorer = new ServerConfigurationRestorer(this, channelController, alertController, codeTemplateController, engineController, scriptController, extensionController, contextFactoryController);
+        restorer.restoreServerConfiguration(serverConfiguration, deploy, overwriteConfigMap);
     }
 
     @Override
@@ -786,6 +639,24 @@ public class DefaultConfigurationController extends ConfigurationController {
 
     @Override
     public synchronized Map<String, ConfigurationProperty> getConfigurationProperties() {
+        try {
+            if (!configMapLoaded && "database".equals(mirthConfig.getString(CONFIGURATION_MAP_LOCATION))) {
+                // load configurations from database
+                String configSerialized = getProperty(PROPERTIES_CORE, "configuration.properties");
+                configMapLoaded = true;
+
+                if (!Strings.isNullOrEmpty(configSerialized)) {
+                    HashMap<String, ConfigurationProperty> configurationMap = (HashMap<String, ConfigurationProperty>) ObjectXMLSerializer.getInstance().deserialize(configSerialized, HashMap.class);
+                    setConfigurationProperties(configurationMap, true);
+                } else {
+                    // make a new blank one and save it
+                    saveProperty(PROPERTIES_CORE, "configuration.properties", ObjectXMLSerializer.getInstance().serialize(new HashMap<String, ConfigurationProperty>()));
+                }
+
+            }
+        } catch (ControllerException e) {
+            logger.error("Failed to load configuration map from database", e);
+        }
         Map<String, ConfigurationProperty> map = new HashMap<String, ConfigurationProperty>();
 
         for (Entry<String, String> entry : configurationMap.entrySet()) {
@@ -857,6 +728,7 @@ public class DefaultConfigurationController extends ConfigurationController {
         logger.debug("retrieving properties: category=" + category);
         Properties properties = new Properties();
 
+        StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readLock();
         try {
             List<KeyValuePair> result = SqlConfig.getSqlSessionManager().selectList("Configuration.selectPropertiesForCategory", category);
 
@@ -865,6 +737,8 @@ public class DefaultConfigurationController extends ConfigurationController {
             }
         } catch (Exception e) {
             logger.error("Could not retrieve properties: category=" + category, e);
+        } finally {
+            StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readUnlock();
         }
 
         return properties;
@@ -873,12 +747,15 @@ public class DefaultConfigurationController extends ConfigurationController {
     public void removePropertiesForGroup(String category) {
         logger.debug("deleting all properties: category=" + category);
 
+        StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readLock();
         try {
             Map<String, Object> parameterMap = new HashMap<String, Object>();
             parameterMap.put("category", category);
             SqlConfig.getSqlSessionManager().delete("Configuration.deleteProperty", parameterMap);
         } catch (Exception e) {
             logger.error("Could not delete properties: category=" + category);
+        } finally {
+            StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readUnlock();
         }
     }
 
@@ -886,13 +763,16 @@ public class DefaultConfigurationController extends ConfigurationController {
     public String getProperty(String category, String name) {
         logger.debug("retrieving property: category=" + category + ", name=" + name);
 
+        StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readLock();
         try {
             Map<String, Object> parameterMap = new HashMap<String, Object>();
             parameterMap.put("category", category);
             parameterMap.put("name", name);
             return (String) SqlConfig.getSqlSessionManager().selectOne("Configuration.selectProperty", parameterMap);
         } catch (Exception e) {
-            logger.warn("Could not retrieve property: category=" + category + ", name=" + name, e);
+            logger.error("Could not retrieve property: category=" + category + ", name=" + name, e);
+        } finally {
+            StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readUnlock();
         }
 
         return null;
@@ -902,6 +782,7 @@ public class DefaultConfigurationController extends ConfigurationController {
     public void saveProperty(String category, String name, String value) {
         logger.debug("storing property: category=" + category + ", name=" + name);
 
+        StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).writeLock();
         try {
             Map<String, Object> parameterMap = new HashMap<String, Object>();
             parameterMap.put("category", category);
@@ -915,10 +796,33 @@ public class DefaultConfigurationController extends ConfigurationController {
             }
 
             if (DatabaseUtil.statementExists("Configuration.vacuumConfigurationTable")) {
-                SqlConfig.getSqlSessionManager().update("Configuration.vacuumConfigurationTable");
+                vacuumConfigurationTable();
             }
         } catch (Exception e) {
             logger.error("Could not store property: category=" + category + ", name=" + name, e);
+        } finally {
+            StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).writeUnlock();
+        }
+    }
+
+    /**
+     * When calling this method, a StatementLock writeLock should surround it
+     */
+    public void vacuumConfigurationTable() {
+        SqlSession session = null;
+        try {
+            session = SqlConfig.getSqlSessionManager().openSession(false);
+            if (DatabaseUtil.statementExists("Configuration.lockConfigurationTable")) {
+                session.update("Configuration.lockConfigurationTable");
+            }
+            session.update("Configuration.vacuumConfigurationTable");
+            session.commit();
+        } catch (Exception e) {
+            logger.error("Could not compress Configuration table", e);
+        } finally {
+            if (session != null) {
+                session.close();
+            }
         }
     }
 
@@ -926,6 +830,7 @@ public class DefaultConfigurationController extends ConfigurationController {
     public void removeProperty(String category, String name) {
         logger.debug("deleting property: category=" + category + ", name=" + name);
 
+        StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readLock();
         try {
             Map<String, Object> parameterMap = new HashMap<String, Object>();
             parameterMap.put("category", category);
@@ -933,6 +838,8 @@ public class DefaultConfigurationController extends ConfigurationController {
             SqlConfig.getSqlSessionManager().delete("Configuration.deleteProperty", parameterMap);
         } catch (Exception e) {
             logger.error("Could not delete property: category=" + category + ", name=" + name, e);
+        } finally {
+            StatementLock.getInstance(VACUUM_LOCK_STATEMENT_ID).readUnlock();
         }
     }
 
@@ -1333,28 +1240,33 @@ public class DefaultConfigurationController extends ConfigurationController {
 
     private void saveConfigurationProperties(Map<String, ConfigurationProperty> map) throws ControllerException {
         try {
-            PropertiesConfiguration configurationMapProperties = new PropertiesConfiguration();
-            configurationMapProperties.setDelimiterParsingDisabled(true);
-            configurationMapProperties.setListDelimiter((char) 0);
-            configurationMapProperties.clear();
+            if (Strings.isNullOrEmpty(mirthConfig.getString(CONFIGURATION_MAP_LOCATION)) || "file".equals(mirthConfig.getString(CONFIGURATION_MAP_LOCATION))) {
+                PropertiesConfiguration configurationMapProperties = new PropertiesConfiguration();
+                configurationMapProperties.setDelimiterParsingDisabled(true);
+                configurationMapProperties.setListDelimiter((char) 0);
+                configurationMapProperties.clear();
 
-            PropertiesConfigurationLayout layout = configurationMapProperties.getLayout();
+                PropertiesConfigurationLayout layout = configurationMapProperties.getLayout();
 
-            Map<String, ConfigurationProperty> sortedMap = new TreeMap<String, ConfigurationProperty>(String.CASE_INSENSITIVE_ORDER);
-            sortedMap.putAll(map);
+                Map<String, ConfigurationProperty> sortedMap = new TreeMap<String, ConfigurationProperty>(String.CASE_INSENSITIVE_ORDER);
+                sortedMap.putAll(map);
 
-            for (Entry<String, ConfigurationProperty> entry : sortedMap.entrySet()) {
-                String key = entry.getKey();
-                String value = entry.getValue().getValue();
-                String comment = entry.getValue().getComment();
+                for (Entry<String, ConfigurationProperty> entry : sortedMap.entrySet()) {
+                    String key = entry.getKey();
+                    String value = entry.getValue().getValue();
+                    String comment = entry.getValue().getComment();
 
-                if (StringUtils.isNotBlank(key)) {
-                    configurationMapProperties.addProperty(key, value);
-                    layout.setComment(key, StringUtils.isBlank(comment) ? null : comment);
+                    if (StringUtils.isNotBlank(key)) {
+                        configurationMapProperties.addProperty(key, value);
+                        layout.setComment(key, StringUtils.isBlank(comment) ? null : comment);
+                    }
                 }
-            }
 
-            configurationMapProperties.save(new File(configurationFile));
+                configurationMapProperties.save(new File(configurationFile));
+            } else {
+                // save to database
+                saveProperty(PROPERTIES_CORE, "configuration.properties", ObjectXMLSerializer.getInstance().serialize(map));
+            }
         } catch (Exception e) {
             throw new ControllerException(e);
         }

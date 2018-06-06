@@ -147,8 +147,15 @@ public class SettingsPanelResources extends AbstractSettingsPanel implements Lis
         try {
             cachedResources = resources;
 
+            String selectedResourceId = null;
+            if (selectedRow > -1 && selectedRow < resourceTable.getRowCount()) {
+                int modelRow = resourceTable.convertRowIndexToModel(selectedRow);
+                ResourceProperties selectedProperties = (ResourceProperties) resourceTable.getModel().getValueAt(modelRow, PROPERTIES_COLUMN);
+                selectedResourceId = selectedProperties.getId();
+            }
+
             for (ResourceClientPlugin plugin : LoadedExtensions.getInstance().getResourceClientPlugins().values()) {
-                plugin.resourcesRefreshed();
+                plugin.resourcesRefreshed(selectedResourceId);
             }
 
             ResourceProperties defaultResource = null;

@@ -20,6 +20,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.log4j.Logger;
 
 import com.mirth.connect.client.core.ControllerException;
+import com.mirth.connect.donkey.model.message.SerializationType;
 import com.mirth.connect.model.Filter;
 import com.mirth.connect.model.MetaData;
 import com.mirth.connect.model.Rule;
@@ -29,11 +30,11 @@ import com.mirth.connect.model.codetemplates.CodeTemplate;
 import com.mirth.connect.model.codetemplates.CodeTemplateLibrary;
 import com.mirth.connect.model.codetemplates.ContextType;
 import com.mirth.connect.model.util.JavaScriptConstants;
-import com.mirth.connect.plugins.DataTypeServerPlugin;
 import com.mirth.connect.server.controllers.CodeTemplateController;
 import com.mirth.connect.server.controllers.ControllerFactory;
 import com.mirth.connect.server.controllers.ExtensionController;
 import com.mirth.connect.server.controllers.ScriptController;
+import com.mirth.connect.server.message.DataTypeFactory;
 import com.mirth.connect.util.CodeTemplateUtil;
 import com.mirth.connect.util.ScriptBuilderException;
 
@@ -138,9 +139,9 @@ public class JavaScriptBuilder {
 
         StringBuilder builder = new StringBuilder();
 
-        DataTypeServerPlugin inboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getInboundDataType());
+        SerializationType inboundSerializationType = DataTypeFactory.getSerializationType(transformer.getInboundDataType(), transformer.getInboundProperties(), true);
 
-        switch (inboundServerPlugin.getSerializationType()) {
+        switch (inboundSerializationType) {
             case JSON:
                 builder.append("msg = JSON.parse(connectorMessage.getTransformedData());\n");
                 break;
@@ -160,9 +161,9 @@ public class JavaScriptBuilder {
 
         // Turn the outbound template into an E4X XML object, if there is one
         if (StringUtils.isNotBlank(transformer.getOutboundTemplate())) {
-            DataTypeServerPlugin outboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getOutboundDataType());
+            SerializationType templateSerializationType = DataTypeFactory.getSerializationType(transformer.getOutboundDataType(), transformer.getOutboundProperties(), true);
 
-            switch (outboundServerPlugin.getSerializationType()) {
+            switch (templateSerializationType) {
                 case JSON:
                     builder.append("tmp = JSON.parse(template);\n");
                     break;
@@ -192,9 +193,9 @@ public class JavaScriptBuilder {
 
         StringBuilder builder = new StringBuilder();
 
-        DataTypeServerPlugin inboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getInboundDataType());
+        SerializationType inboundSerializationType = DataTypeFactory.getSerializationType(transformer.getInboundDataType(), transformer.getInboundProperties(), true);
 
-        switch (inboundServerPlugin.getSerializationType()) {
+        switch (inboundSerializationType) {
             case JSON:
                 // Turn the inbound message into a JavaScript object
                 builder.append("msg = JSON.parse(connectorMessage.getResponseTransformedData());\n");
@@ -214,9 +215,9 @@ public class JavaScriptBuilder {
         }
 
         if (StringUtils.isNotBlank(transformer.getOutboundTemplate())) {
-            DataTypeServerPlugin outboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getOutboundDataType());
+            SerializationType templateSerializationType = DataTypeFactory.getSerializationType(transformer.getOutboundDataType(), transformer.getOutboundProperties(), true);
 
-            switch (outboundServerPlugin.getSerializationType()) {
+            switch (templateSerializationType) {
                 case JSON:
                     // Turn the outbound template into a JavaScript object, if there is one
                     builder.append("tmp = JSON.parse(template);\n");
@@ -399,6 +400,30 @@ public class JavaScriptBuilder {
         builder.append("    return 0;\n");
         builder.append("}\n");
 
+        // Helper function to create a new String but leave undefined/null values alone
+        builder.append("function newStringOrUndefined(value) {\n");
+        builder.append("    if ('undefined' !== typeof value && value != null) {\n");
+        builder.append("        value = new String(value);\n");
+        builder.append("    }\n");
+        builder.append("    return value;\n");
+        builder.append("}\n");
+
+        // Helper function to create a new Boolean but leave undefined/null values alone
+        builder.append("function newBooleanOrUndefined(value) {\n");
+        builder.append("    if ('undefined' !== typeof value && value != null) {\n");
+        builder.append("        value = new Boolean(value);\n");
+        builder.append("    }\n");
+        builder.append("    return value;\n");
+        builder.append("}\n");
+
+        // Helper function to create a new Number but leave undefined/null values alone
+        builder.append("function newNumberOrUndefined(value) {\n");
+        builder.append("    if ('undefined' !== typeof value && value != null) {\n");
+        builder.append("        value = new Number(value);\n");
+        builder.append("    }\n");
+        builder.append("    return value;\n");
+        builder.append("}\n");
+
         /*
          * Since we use a sealed shared scope everywhere, importClass won't be available. To allow
          * this to still work for migration, we override importClass to call importPackage instead.
@@ -442,20 +467,53 @@ public class JavaScriptBuilder {
     }
 
     private static void appendAttachmentFunctions(StringBuilder builder, Set<String> scriptOptions) {
+        // Helper function to access attachment IDs (returns List<String>)
+        builder.append("function getAttachmentIds(channelId, messageId) {\n");
+        builder.append("    if (arguments.length == 2) {\n");
+        builder.append("        return AttachmentUtil.getMessageAttachmentIds(channelId, messageId);\n");
+        builder.append("    } else {\n");
+        builder.append("        return AttachmentUtil.getMessageAttachmentIds(connectorMessage);\n");
+        builder.append("    }\n");
+        builder.append("}\n");
+
         // Helper function to access attachments (returns List<Attachment>)
-        builder.append("function getAttachments() {");
-        builder.append("return AttachmentUtil.getMessageAttachments(connectorMessage);");
+        builder.append("function getAttachments(base64Decode) {\n");
+        builder.append("    return AttachmentUtil.getMessageAttachments(connectorMessage, !!base64Decode || false);\n");
+        builder.append("}\n");
+
+        // Helper function to access a specific attachment (returns Attachment)
+        builder.append("function getAttachment() {\n");
+        builder.append("    if (arguments.length >= 3) {\n");
+        builder.append("        return AttachmentUtil.getMessageAttachment(arguments[0], arguments[1], arguments[2], !!arguments[3] || false);\n");
+        builder.append("    } else {\n");
+        builder.append("        return AttachmentUtil.getMessageAttachment(connectorMessage, arguments[0], !!arguments[1] || false);\n");
+        builder.append("    }\n");
+        builder.append("}\n");
+
+        // Helper function to update a specific attachment (returns Attachment)
+        builder.append("function updateAttachment() {\n");
+        builder.append("    if (arguments.length >= 5) {\n");
+        builder.append("        return AttachmentUtil.updateAttachment(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], !!arguments[5] || false);\n");
+        builder.append("    } else if (arguments.length >= 3) {\n");
+        builder.append("        if (arguments[2] && arguments[2] instanceof Attachment) {\n");
+        builder.append("            return AttachmentUtil.updateAttachment(arguments[0], arguments[1], arguments[2], !!arguments[3] || false);\n");
+        builder.append("        } else {\n");
+        builder.append("            return AttachmentUtil.updateAttachment(connectorMessage, arguments[0], arguments[1], arguments[2], !!arguments[3] || false);\n");
+        builder.append("        }\n");
+        builder.append("    } else {\n");
+        builder.append("        return AttachmentUtil.updateAttachment(connectorMessage, arguments[0], !!arguments[1] || false);\n");
+        builder.append("    }\n");
         builder.append("}\n");
 
         // Helper function to set attachment
         if (scriptOptions != null && scriptOptions.contains("useAttachmentList")) {
 
-            builder.append("function addAttachment(data, type) {\n");
-            builder.append("return AttachmentUtil.addAttachment(mirth_attachments, data, type);\n");
+            builder.append("function addAttachment(data, type, base64Encode) {\n");
+            builder.append("return AttachmentUtil.addAttachment(mirth_attachments, data, type, !!base64Encode || false);\n");
             builder.append("}\n");
         } else {
-            builder.append("function addAttachment(data, type) {\n");
-            builder.append("return AttachmentUtil.createAttachment(connectorMessage, data, type);\n");
+            builder.append("function addAttachment(data, type, base64Encode) {\n");
+            builder.append("return AttachmentUtil.createAttachment(connectorMessage, data, type, !!base64Encode || false);\n");
             builder.append("}\n");
         }
     }

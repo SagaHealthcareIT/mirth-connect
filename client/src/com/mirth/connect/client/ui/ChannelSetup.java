@@ -68,6 +68,8 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableModel;
 
+import net.miginfocom.swing.MigLayout;
+
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.SerializationException;
 import org.apache.commons.lang3.SerializationUtils;
@@ -130,8 +132,6 @@ import com.mirth.connect.model.util.JavaScriptConstants;
 import com.mirth.connect.plugins.ChannelTabPlugin;
 import com.mirth.connect.util.JavaScriptSharedUtil;
 import com.mirth.connect.util.PropertyVerifier;
-
-import net.miginfocom.swing.MigLayout;
 
 /** The channel editor panel. Majority of the client application */
 public class ChannelSetup extends JPanel {
@@ -2386,7 +2386,8 @@ public class ChannelSetup extends JPanel {
         channelPropertiesPanel.add(attachmentLabel, "newline, right");
         channelPropertiesPanel.add(attachmentComboBox, "w 108!, split 2");
         channelPropertiesPanel.add(attachmentPropertiesButton, "gapbefore 6");
-        channelPropertiesPanel.add(attachmentStoreCheckBox);
+        channelPropertiesPanel.add(attachmentStoreCheckBox, "split 2");
+        channelPropertiesPanel.add(attachmentWarningLabel, "gapbefore 12");
         channelPropertiesPanel.add(tagsLabel, "newline, right");
         channelPropertiesPanel.add(tagsField, "sx, growx");
 
@@ -2558,6 +2559,8 @@ public class ChannelSetup extends JPanel {
                 props = sourceConnectorPanel.getProperties();
                 ((SourceConnectorPropertiesInterface) props).getSourceConnectorProperties().setResourceIds(resourceIds.get(sourceConnector.getMetaDataId()));
                 sourceConnector.setProperties(props);
+                
+                checkAndSetSourceDataType();
             }
 
             sourceConnector.setTransportName((String) sourceConnectorTypeComboBox.getSelectedItem());
@@ -2567,9 +2570,6 @@ public class ChannelSetup extends JPanel {
             ((SourceConnectorPropertiesInterface) props).getSourceConnectorProperties().setResourceIds(resourceIds.get(sourceConnector.getMetaDataId()));
             sourceConnectorPanel.setProperties(props);
         }
-
-        // Set the source data type to XML if necessary
-        checkAndSetXmlDataType();
 
         sourceConnectorScrollPane.repaint();
 
@@ -2671,8 +2671,8 @@ public class ChannelSetup extends JPanel {
                 break;
 
             default:
-                attachmentStoreCheckBox.setSelected(type != AttachmentHandlerType.NONE);
-                attachmentStoreCheckBox.setEnabled(type != AttachmentHandlerType.NONE);
+                attachmentStoreCheckBox.setSelected(true);
+                attachmentStoreCheckBox.setEnabled(true);
                 break;
         }
 
@@ -2769,7 +2769,7 @@ public class ChannelSetup extends JPanel {
             default:
                 if (!attachmentStoreCheckBox.isEnabled()) {
                     attachmentStoreCheckBox.setSelected(attachmentComboBox.getSelectedItem() != AttachmentHandlerType.NONE);
-                    attachmentStoreCheckBox.setEnabled(attachmentComboBox.getSelectedItem() != AttachmentHandlerType.NONE);
+                    attachmentStoreCheckBox.setEnabled(true);
                 }
                 break;
         }
@@ -2873,6 +2873,8 @@ public class ChannelSetup extends JPanel {
             destinationConnector.setProperties(props);
 
             setResourceIds();
+            
+            checkAndSetDestinationAndResponseDataType();
         }
 
         destinationVariableList.setTransferMode(destinationConnectorPanel.getTransferMode());
@@ -2993,24 +2995,126 @@ public class ChannelSetup extends JPanel {
     }
 
     /**
-     * Returns true if this channel requires XML as a source data type, and false if it does not.
+     * Returns the required source data type of this channel.
      */
-    public boolean requiresXmlDataType() {
-        return sourceConnectorPanel.requiresXmlDataType();
+    public String getRequiredInboundDataType() {
+        return sourceConnectorPanel.getRequiredInboundDataType();
     }
 
     /**
-     * Check if the source data type is required to be XML, and set it if necessary.
+     * Returns the required source data type of this channel.
      */
-    public void checkAndSetXmlDataType() {
-        if (requiresXmlDataType() && !currentChannel.getSourceConnector().getTransformer().getInboundDataType().equals(UIConstants.DATATYPE_XML)) {
-            DataTypeProperties defaultProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(UIConstants.DATATYPE_XML).getDefaultProperties();
+    public String getRequiredOutboundDataType() {
+        return sourceConnectorPanel.getRequiredOutboundDataType();
+    }
+    
+    /**
+     * Returns the initial, or default, source inbound data type of this channel.
+     */
+    public String getInitialInboundDataType() {
+        return sourceConnectorPanel.getInitialInboundDataType();
+    }
+    
+    /**
+     * Returns the initial, or default, source outbound data type of this channel.
+     */
+    private String getInitialOutboundDataType() {
+        return sourceConnectorPanel.getInitialOutboundDataType();
+    }
+    
+    /*
+     * Set Data Types for source inbound and outbound which also means destination inbound
+     */
+    public void checkAndSetSourceDataType() {
+        // Inbound
+        String requiredInboundDataType = getRequiredInboundDataType();
+        String initialInboundDataType = getInitialInboundDataType();
+        String inboundDataType = requiredInboundDataType != null ? requiredInboundDataType : initialInboundDataType;
+        if (inboundDataType != null && !currentChannel.getSourceConnector().getTransformer().getInboundDataType().equals(inboundDataType)) {
+            DataTypeProperties defaultProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(inboundDataType).getDefaultProperties();
 
-            currentChannel.getSourceConnector().getTransformer().setInboundDataType(UIConstants.DATATYPE_XML);
+            currentChannel.getSourceConnector().getTransformer().setInboundDataType(inboundDataType);
             currentChannel.getSourceConnector().getTransformer().setInboundProperties(defaultProperties);
+        }
+        
+        // Outbound
+        String requiredOutboundDataType = getRequiredOutboundDataType();
+        String initialOutboundDataType = getInitialOutboundDataType();
+        String outboundDataType = requiredOutboundDataType != null ? requiredOutboundDataType : initialOutboundDataType;
+        if (outboundDataType != null && !currentChannel.getSourceConnector().getTransformer().getOutboundDataType().equals(outboundDataType)) {
+            DataTypeProperties defaultProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(outboundDataType).getDefaultProperties();
+
+            currentChannel.getSourceConnector().getTransformer().setOutboundDataType(outboundDataType);
+            currentChannel.getSourceConnector().getTransformer().setOutboundProperties(defaultProperties);
+
+            for (Connector destination : currentChannel.getDestinationConnectors()) {
+                destination.getTransformer().setInboundDataType(outboundDataType);
+                destination.getTransformer().setInboundProperties(defaultProperties);
+            }
         }
     }
 
+    /**
+     * Returns the required data type for the selected destination of this channel.
+     */
+    public String getRequiredOutboundDestinationDataType() {
+        return destinationConnectorPanel.getRequiredOutboundDataType();
+    }
+    
+    /**
+     * Returns the initial, or default, outbound data type for the selected destination of this channel.
+     */
+    private String getInitialOutboundDestinationDataType() {
+        return destinationConnectorPanel.getInitialOutboundDataType();
+    }
+    
+    /**
+     * Returns the initial, or default, inbound data type for the selected destination response of this channel.
+     */
+    public String getInitialInboundResponseDataType() {
+        return destinationConnectorPanel.getInitialInboundResponseDataType();
+    }
+    
+    /**
+     * Returns the initial, or default, outbound data type for the selected destination response of this channel.
+     */
+    public String getInitialOutboundResponseDataType() {
+        return destinationConnectorPanel.getInitialOutboundResponseDataType();
+    }
+    
+    /**
+     * Set Data types specified by selected destination for destination and response
+     */
+    public void checkAndSetDestinationAndResponseDataType() {
+        // Destination inbound set by source outbound
+        
+        // Destination outbound
+        String requiredOutboundDataType = getRequiredOutboundDestinationDataType();
+        String initialOutboundDataType = getInitialOutboundDestinationDataType();
+        String outboundDataType = requiredOutboundDataType != null ? requiredOutboundDataType : initialOutboundDataType;
+        if (outboundDataType != null && !currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getTransformer().getOutboundDataType().equals(outboundDataType)) {
+            DataTypeProperties defaultProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(outboundDataType).getDefaultProperties();
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getTransformer().setOutboundDataType(outboundDataType);
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getTransformer().setOutboundProperties(defaultProperties);
+        }
+        
+        // Response inbound
+        String responseInboundDataType = getInitialInboundResponseDataType();
+        if (responseInboundDataType != null && !currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().getOutboundDataType().equals(responseInboundDataType)) {
+            DataTypeProperties defaultResponseInboundProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(responseInboundDataType).getDefaultProperties();
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().setInboundDataType(responseInboundDataType);
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().setInboundProperties(defaultResponseInboundProperties);
+        }
+        
+        // Response outbound
+        String responseOutboundDataType = getInitialOutboundResponseDataType();
+        if (responseOutboundDataType!= null && !currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().getOutboundDataType().equals(responseOutboundDataType)) {
+            DataTypeProperties defaultResponseOutboundProperties = LoadedExtensions.getInstance().getDataTypePlugins().get(responseOutboundDataType).getDefaultProperties();
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().setOutboundDataType(responseOutboundDataType);
+            currentChannel.getDestinationConnectors().get(destinationTable.getSelectedModelIndex()).getResponseTransformer().setOutboundProperties(defaultResponseOutboundProperties);
+        }
+    }
+    
     public void updateComponentShown() {
         if (channelView.getSelectedIndex() == SOURCE_TAB_INDEX) {
             sourceComponentShown(null);

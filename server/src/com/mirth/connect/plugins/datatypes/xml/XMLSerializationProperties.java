@@ -20,7 +20,7 @@ import com.mirth.connect.model.datatype.SerializationProperties;
 
 public class XMLSerializationProperties extends SerializationProperties {
 
-    private boolean stripNamespaces = true;
+    private boolean stripNamespaces = false;
 
     @Override
     public Map<String, DataTypePropertyDescriptor> getPropertyDescriptors() {
@@ -69,6 +69,9 @@ public class XMLSerializationProperties extends SerializationProperties {
     @Override
     public void migrate3_5_0(DonkeyElement element) {}
 
+    @Override
+    public void migrate3_6_0(DonkeyElement element) {}
+    
     @Override
     public Map<String, Object> getPurgedProperties() {
         Map<String, Object> purgedProperties = new HashMap<String, Object>();

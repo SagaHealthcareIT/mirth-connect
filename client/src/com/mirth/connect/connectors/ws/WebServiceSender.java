@@ -10,10 +10,13 @@
 package com.mirth.connect.connectors.ws;
 
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Point;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
@@ -28,16 +31,23 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.prefs.Preferences;
 
+import javax.swing.BorderFactory;
+import javax.swing.ButtonGroup;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JScrollPane;
 import javax.swing.TransferHandler;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import javax.swing.table.DefaultTableModel;
+
+import net.miginfocom.swing.MigLayout;
 
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
@@ -51,23 +61,31 @@ import com.mirth.connect.client.ui.ConnectorTypeDecoration;
 import com.mirth.connect.client.ui.Frame;
 import com.mirth.connect.client.ui.Mirth;
 import com.mirth.connect.client.ui.PlatformUI;
+import com.mirth.connect.client.ui.RefreshTableModel;
 import com.mirth.connect.client.ui.TextFieldCellEditor;
 import com.mirth.connect.client.ui.UIConstants;
+import com.mirth.connect.client.ui.components.MirthComboBox;
+import com.mirth.connect.client.ui.components.MirthEditableComboBox;
+import com.mirth.connect.client.ui.components.MirthIconTextField;
+import com.mirth.connect.client.ui.components.MirthPasswordField;
+import com.mirth.connect.client.ui.components.MirthRadioButton;
+import com.mirth.connect.client.ui.components.MirthSyntaxTextArea;
 import com.mirth.connect.client.ui.components.MirthTable;
+import com.mirth.connect.client.ui.components.MirthTextField;
 import com.mirth.connect.client.ui.panels.connectors.ConnectorSettingsPanel;
 import com.mirth.connect.client.ui.panels.connectors.ResponseHandler;
-import com.mirth.connect.connectors.http.SSLWarningPanel;
 import com.mirth.connect.connectors.ws.DefinitionServiceMap.DefinitionPortMap;
 import com.mirth.connect.connectors.ws.DefinitionServiceMap.PortInformation;
 import com.mirth.connect.donkey.model.channel.ConnectorProperties;
 import com.mirth.connect.model.Connector.Mode;
 import com.mirth.connect.model.converters.ObjectXMLSerializer;
+import com.mirth.connect.util.ConnectionTestResponse;
 
 public class WebServiceSender extends ConnectorSettingsPanel {
 
-    private static final ImageIcon ICON_LOCK_X = new ImageIcon(Frame.class.getResource("images/lock_x.png"));
-    private static final Color COLOR_SSL_NOT_CONFIGURED = new Color(0xFFF099);
-    private static final String SSL_TOOL_TIP = "<html>The default system certificate store will be used for this connection.<br/>As a result, certain security options are not available and mutual<br/>authentication (two-way authentication) is not supported.</html>";
+    protected static final ImageIcon ICON_LOCK_X = new ImageIcon(Frame.class.getResource("images/lock_x.png"));
+    protected static final Color COLOR_SSL_NOT_CONFIGURED = new Color(0xFFF099);
+    protected static final String SSL_TOOL_TIP = "<html>The default system certificate store will be used for this connection.<br/>As a result, certain security options are not available and mutual<br/>authentication (two-way authentication) is not supported.</html>";
 
     private final int ID_COLUMN_NUMBER = 0;
     private final int CONTENT_COLUMN_NUMBER = 1;
@@ -85,33 +103,12 @@ public class WebServiceSender extends ConnectorSettingsPanel {
     ObjectXMLSerializer serializer = ObjectXMLSerializer.getInstance();
     private Frame parent;
     private DefinitionServiceMap currentServiceMap;
-    private SSLWarningPanel sslWarningPanel;
 
     public WebServiceSender() {
         this.parent = PlatformUI.MIRTH_FRAME;
         initComponents();
-
-        SyntaxDocument document = new SyntaxDocument();
-        document.setTokenMarker(new XMLTokenMarker());
-        soapEnvelope.setDocument(document);
-
-        KeyListener keyListener = new KeyAdapter() {
-            public void keyReleased(KeyEvent evt) {
-                urlFieldChanged();
-            }
-        };
-        wsdlUrlField.addKeyListener(keyListener);
-        soapActionField.addKeyListener(keyListener);
-
-        headersPane.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent evt) {
-                deselectRows(headersTable, headersDeleteButton);
-            }
-        });
-        headersDeleteButton.setEnabled(false);
-
-        sslWarningPanel = new SSLWarningPanel();
+        initToolTips();
+        initLayout();
     }
 
     @Override
@@ -124,9 +121,9 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         WebServiceDispatcherProperties properties = new WebServiceDispatcherProperties();
 
         properties.setWsdlUrl(wsdlUrlField.getText());
-        properties.setService(StringUtils.trimToEmpty((String) serviceComboBox.getSelectedItem()));
-        properties.setPort(StringUtils.trimToEmpty((String) portComboBox.getSelectedItem()));
-        properties.setLocationURI(StringUtils.trimToEmpty((String) locationURIComboBox.getSelectedItem()));
+        properties.setService(StringUtils.trimToEmpty((String) serviceComboBox.getEditor().getItem()));
+        properties.setPort(StringUtils.trimToEmpty((String) portComboBox.getEditor().getItem()));
+        properties.setLocationURI(StringUtils.trimToEmpty((String) locationURIComboBox.getEditor().getItem()));
         properties.setSocketTimeout(socketTimeoutField.getText());
         properties.setSoapAction(soapActionField.getText());
 
@@ -141,7 +138,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         properties.setUsername(usernameField.getText());
         properties.setPassword(new String(passwordField.getPassword()));
 
-        properties.setEnvelope(soapEnvelope.getText());
+        properties.setEnvelope(soapEnvelopeTextArea.getText());
 
         ArrayList<String> operations = new ArrayList<String>();
         for (int i = 0; i < operationComboBox.getModel().getSize(); i++) {
@@ -169,7 +166,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         soapActionField.setText(props.getSoapAction());
         urlFieldChanged();
 
-        soapEnvelope.setText(props.getEnvelope());
+        soapEnvelopeTextArea.setText(props.getEnvelope());
         socketTimeoutField.setText(props.getSocketTimeout());
 
         if (props.isUseAuthentication()) {
@@ -198,7 +195,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         portComboBox.setSelectedItem(props.getPort());
         locationURIComboBox.setSelectedItem(props.getLocationURI());
         operationComboBox.setSelectedItem(props.getOperation());
-        generateEnvelope.setEnabled(!isDefaultOperations());
+        updateGenerateEnvelopeButtonEnabled();
 
         parent.setSaveEnabled(enabled);
 
@@ -267,7 +264,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         if (props.getEnvelope().length() == 0) {
             valid = false;
             if (highlight) {
-                soapEnvelope.setBackground(UIConstants.INVALID_COLOR);
+                soapEnvelopeTextArea.setBackground(UIConstants.INVALID_COLOR);
             }
         }
 
@@ -280,13 +277,14 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         urlFieldChanged();
         serviceComboBox.setBackground(new Color(0xDEDEDE));
         portComboBox.setBackground(new Color(0xDEDEDE));
+        locationURIComboBox.setBackground(UIConstants.COMBO_BOX_BACKGROUND);
         socketTimeoutField.setBackground(null);
-        soapEnvelope.setBackground(null);
+        soapEnvelopeTextArea.setBackground(null);
     }
 
     @Override
     public ConnectorTypeDecoration getConnectorTypeDecoration() {
-        if (isUsingHttps(wsdlUrlField.getText()) || isUsingHttps(soapActionField.getText())) {
+        if (isUsingHttps(wsdlUrlField.getText()) || isUsingHttps(String.valueOf(locationURIComboBox.getSelectedItem()))) {
             return new ConnectorTypeDecoration(Mode.DESTINATION, "(SSL Not Configured)", ICON_LOCK_X, SSL_TOOL_TIP, sslWarningPanel, COLOR_SSL_NOT_CONFIGURED);
         } else {
             return new ConnectorTypeDecoration(Mode.DESTINATION);
@@ -300,26 +298,45 @@ public class WebServiceSender extends ConnectorSettingsPanel {
             wsdlUrlField.setAlternateToolTipText(connectorTypeDecoration.getIconToolTipText());
             wsdlUrlField.setIconPopupMenuComponent(connectorTypeDecoration.getIconPopupComponent());
             wsdlUrlField.setBackground(connectorTypeDecoration.getHighlightColor());
-            soapActionField.setIcon(connectorTypeDecoration.getIcon());
-            soapActionField.setBackground(connectorTypeDecoration.getHighlightColor());
-            soapActionField.setAlternateToolTipText(connectorTypeDecoration.getIconToolTipText());
-            soapActionField.setIconPopupMenuComponent(connectorTypeDecoration.getIconPopupComponent());
+            locationURIComboBox.setBackground(connectorTypeDecoration.getHighlightColor() != null ? connectorTypeDecoration.getHighlightColor() : UIConstants.COMBO_BOX_BACKGROUND);
         }
     }
 
-    private void loadServiceMap() {
+    protected DefinitionServiceMap getCurrentServiceMap() {
+        return currentServiceMap;
+    }
+
+    protected void setCurrentServiceMap(DefinitionServiceMap serviceMap) {
+        currentServiceMap = serviceMap;
+    }
+
+    protected boolean canSetLocationURI() {
+        return true;
+    }
+
+    protected void loadServiceMap() {
         // First reset the service/port/operation
         serviceComboBox.setModel(new DefaultComboBoxModel());
         portComboBox.setModel(new DefaultComboBoxModel());
-        locationURIComboBox.setModel(new DefaultComboBoxModel());
-        operationComboBox.setModel(new DefaultComboBoxModel(new String[] { WebServiceDispatcherProperties.WEBSERVICE_DEFAULT_DROPDOWN }));
+
+        if (canSetLocationURI()) {
+            locationURIComboBox.setModel(new DefaultComboBoxModel());
+        }
+
+        operationComboBox.setModel(new DefaultComboBoxModel(new String[] {
+                WebServiceDispatcherProperties.WEBSERVICE_DEFAULT_DROPDOWN }));
 
         if (currentServiceMap != null) {
             serviceComboBox.setModel(new DefaultComboBoxModel(currentServiceMap.getMap().keySet().toArray()));
+
+            // If at least one service exists, make sure to trigger the action performed handler
+            if (serviceComboBox.getModel().getSize() > 0) {
+                serviceComboBox.setSelectedIndex(0);
+            }
         }
     }
 
-    private boolean isUsingHttps(String url) {
+    protected boolean isUsingHttps(String url) {
         if (StringUtils.isNotBlank(url)) {
             try {
                 URI hostURI = new URI(url);
@@ -353,12 +370,10 @@ public class WebServiceSender extends ConnectorSettingsPanel {
 
         Object[][] tableData = new Object[size][2];
 
-        headersTable = new MirthTable();
-
         int j = 0;
-        Iterator i = properties.entrySet().iterator();
+        Iterator<Entry<String, List<String>>> i = properties.entrySet().iterator();
         while (i.hasNext()) {
-            Map.Entry entry = (Map.Entry) i.next();
+            Entry<String, List<String>> entry = i.next();
             for (String keyValue : (List<String>) entry.getValue()) {
                 tableData[j][NAME_COLUMN] = (String) entry.getKey();
                 tableData[j][VALUE_COLUMN] = keyValue;
@@ -366,78 +381,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
             }
         }
 
-        headersTable.setModel(new javax.swing.table.DefaultTableModel(tableData, new String[] {
-                NAME_COLUMN_NAME, VALUE_COLUMN_NAME }) {
-
-            boolean[] canEdit = new boolean[] { true, true };
-
-            public boolean isCellEditable(int rowIndex, int columnIndex) {
-                return canEdit[columnIndex];
-            }
-        });
-
-        headersTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
-
-            public void valueChanged(ListSelectionEvent evt) {
-                if (getSelectedRow(headersTable) != -1) {
-                    headerLastIndex = getSelectedRow(headersTable);
-                    headersDeleteButton.setEnabled(true);
-                } else {
-                    headersDeleteButton.setEnabled(false);
-                }
-            }
-        });
-
-        class WebServiceTableCellEditor extends TextFieldCellEditor {
-            boolean checkProperties;
-
-            public WebServiceTableCellEditor(boolean checkProperties) {
-                super();
-                this.checkProperties = checkProperties;
-            }
-
-            @Override
-            public boolean isCellEditable(EventObject evt) {
-                boolean editable = super.isCellEditable(evt);
-
-                if (editable) {
-                    headersDeleteButton.setEnabled(false);
-                }
-
-                return editable;
-            }
-
-            @Override
-            protected boolean valueChanged(String value) {
-                headersDeleteButton.setEnabled(true);
-
-                if (checkProperties && (value.length() == 0)) {
-                    return false;
-                }
-
-                parent.setSaveEnabled(true);
-                return true;
-            }
-        }
-
-        headersTable.getColumnModel().getColumn(headersTable.getColumnModel().getColumnIndex(NAME_COLUMN_NAME)).setCellEditor(new WebServiceTableCellEditor(true));
-        headersTable.getColumnModel().getColumn(headersTable.getColumnModel().getColumnIndex(VALUE_COLUMN_NAME)).setCellEditor(new WebServiceTableCellEditor(false));
-        headersTable.setCustomEditorControls(true);
-
-        headersTable.setSelectionMode(0);
-        headersTable.setRowSelectionAllowed(true);
-        headersTable.setRowHeight(UIConstants.ROW_HEIGHT);
-        headersTable.setDragEnabled(false);
-        headersTable.setOpaque(true);
-        headersTable.setSortable(false);
-        headersTable.getTableHeader().setReorderingAllowed(false);
-
-        if (Preferences.userNodeForPackage(Mirth.class).getBoolean("highlightRows", true)) {
-            Highlighter highlighter = HighlighterFactory.createAlternateStriping(UIConstants.HIGHLIGHTER_COLOR, UIConstants.BACKGROUND_COLOR);
-            headersTable.setHighlighters(highlighter);
-        }
-
-        headersPane.setViewportView(headersTable);
+        ((RefreshTableModel) headersTable.getModel()).refreshDataVector(tableData);
     }
 
     public Map<String, List<String>> getHeaderProperties() {
@@ -495,14 +439,11 @@ public class WebServiceSender extends ConnectorSettingsPanel {
     }
 
     private void setAttachments(List<List<String>> attachments) {
-
         List<String> attachmentIds = attachments.get(0);
         List<String> attachmentContents = attachments.get(1);
         List<String> attachmentTypes = attachments.get(2);
 
         Object[][] tableData = new Object[attachmentIds.size()][3];
-
-        attachmentsTable = new MirthTable();
 
         for (int i = 0; i < attachmentIds.size(); i++) {
             tableData[i][ID_COLUMN_NUMBER] = attachmentIds.get(i);
@@ -510,126 +451,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
             tableData[i][MIME_TYPE_COLUMN_NUMBER] = attachmentTypes.get(i);
         }
 
-        attachmentsTable.setModel(new javax.swing.table.DefaultTableModel(tableData, new String[] {
-                ID_COLUMN_NAME, CONTENT_COLUMN_NAME, MIME_TYPE_COLUMN_NAME }) {
-
-            boolean[] canEdit = new boolean[] { true, true, true };
-
-            public boolean isCellEditable(int rowIndex, int columnIndex) {
-                return canEdit[columnIndex];
-            }
-        });
-
-        attachmentsTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
-
-            public void valueChanged(ListSelectionEvent evt) {
-                if (attachmentsTable.getSelectedModelIndex() != -1) {
-                    deleteButton.setEnabled(true);
-                } else {
-                    deleteButton.setEnabled(false);
-                }
-            }
-        });
-
-        class AttachmentsTableCellEditor extends TextFieldCellEditor {
-
-            boolean checkUnique;
-
-            public AttachmentsTableCellEditor(boolean checkUnique) {
-                super();
-                this.checkUnique = checkUnique;
-            }
-
-            public boolean checkUnique(String value) {
-                boolean exists = false;
-
-                for (int i = 0; i < attachmentsTable.getModel().getRowCount(); i++) {
-                    if (((String) attachmentsTable.getModel().getValueAt(i, ID_COLUMN_NUMBER)).equalsIgnoreCase(value)) {
-                        exists = true;
-                    }
-                }
-
-                return exists;
-            }
-
-            @Override
-            public boolean isCellEditable(EventObject evt) {
-                boolean editable = super.isCellEditable(evt);
-
-                if (editable) {
-                    deleteButton.setEnabled(false);
-                }
-
-                return editable;
-            }
-
-            @Override
-            protected boolean valueChanged(String value) {
-                deleteButton.setEnabled(true);
-
-                if (checkUnique && (value.length() == 0 || checkUnique(value))) {
-                    return false;
-                }
-
-                parent.setSaveEnabled(true);
-                return true;
-            }
-        }
-
-        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(ID_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(true));
-        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(CONTENT_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(false));
-        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(MIME_TYPE_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(false));
-        attachmentsTable.setCustomEditorControls(true);
-
-        attachmentsTable.setSelectionMode(0);
-        attachmentsTable.setRowSelectionAllowed(true);
-        attachmentsTable.setRowHeight(UIConstants.ROW_HEIGHT);
-        attachmentsTable.setDragEnabled(true);
-
-        attachmentsTable.setTransferHandler(new TransferHandler() {
-
-            protected Transferable createTransferable(JComponent c) {
-                try {
-                    MirthTable table = ((MirthTable) (c));
-
-                    if (table == null) {
-                        return null;
-                    }
-
-                    int currRow = table.convertRowIndexToModel(table.getSelectedRow());
-
-                    String text = "";
-                    if (currRow >= 0 && currRow < table.getModel().getRowCount()) {
-                        text = (String) table.getModel().getValueAt(currRow, ID_COLUMN_NUMBER);
-                    }
-
-                    text = "<inc:Include href=\"cid:" + text + "\" xmlns:inc=\"http://www.w3.org/2004/08/xop/include\"/>";
-
-                    return new StringSelection(text);
-                } catch (ClassCastException cce) {
-                    return null;
-                }
-            }
-
-            public int getSourceActions(JComponent c) {
-                return COPY;
-            }
-
-            public boolean canImport(JComponent c, DataFlavor[] df) {
-                return false;
-            }
-        });
-
-        attachmentsTable.setOpaque(true);
-        attachmentsTable.setSortable(true);
-
-        if (Preferences.userNodeForPackage(Mirth.class).getBoolean("highlightRows", true)) {
-            Highlighter highlighter = HighlighterFactory.createAlternateStriping(UIConstants.HIGHLIGHTER_COLOR, UIConstants.BACKGROUND_COLOR);
-            attachmentsTable.setHighlighters(highlighter);
-        }
-
-        attachmentsPane.setViewportView(attachmentsTable);
-        deleteButton.setEnabled(false);
+        ((RefreshTableModel) attachmentsTable.getModel()).refreshDataVector(tableData);
     }
 
     private List<List<String>> getAttachments() {
@@ -682,421 +504,494 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         return "";
     }
 
-    // @formatter:off
-    /**
-     * This method is called from within the constructor to initialize the form.
-     * WARNING: Do NOT modify this code. The content of this method is always
-     * regenerated by the Form Editor.
-     */
-    // <editor-fold defaultstate="collapsed" desc=" Generated Code
-    // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
-    private void initComponents() {
+    protected void initComponents() {
+        setBackground(UIConstants.BACKGROUND_COLOR);
 
-        authenticationButtonGroup = new javax.swing.ButtonGroup();
-        invocationButtonGroup = new javax.swing.ButtonGroup();
-        useMtomButtonGroup = new javax.swing.ButtonGroup();
-        wsdlUrlLabel = new javax.swing.JLabel();
-        wsdlUrlField = new com.mirth.connect.client.ui.components.MirthIconTextField();
-        getOperationsButton = new javax.swing.JButton();
-        operationComboBox = new com.mirth.connect.client.ui.components.MirthComboBox();
-        jLabel1 = new javax.swing.JLabel();
-        serviceLabel = new javax.swing.JLabel();
-        soapEnvelope = new com.mirth.connect.client.ui.components.MirthSyntaxTextArea(true);
-        portLabel = new javax.swing.JLabel();
-        jLabel4 = new javax.swing.JLabel();
-        generateEnvelope = new javax.swing.JButton();
-        attachmentsLabel = new javax.swing.JLabel();
-        attachmentsPane = new javax.swing.JScrollPane();
-        attachmentsTable = new com.mirth.connect.client.ui.components.MirthTable();
-        newButton = new javax.swing.JButton();
-        deleteButton = new javax.swing.JButton();
-        authenticationLabel = new javax.swing.JLabel();
-        authenticationYesRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        authenticationNoRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        usernameLabel = new javax.swing.JLabel();
-        usernameField = new com.mirth.connect.client.ui.components.MirthTextField();
-        passwordField = new com.mirth.connect.client.ui.components.MirthPasswordField();
-        passwordLabel = new javax.swing.JLabel();
-        invocationTypeLabel = new javax.swing.JLabel();
-        invocationTwoWayRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        invocationOneWayRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        useMtomLabel = new javax.swing.JLabel();
-        useMtomYesRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        useMtomNoRadio = new com.mirth.connect.client.ui.components.MirthRadioButton();
-        soapActionField = new com.mirth.connect.client.ui.components.MirthIconTextField();
-        soapActionLabel = new javax.swing.JLabel();
-        serviceComboBox = new com.mirth.connect.client.ui.components.MirthEditableComboBox();
-        portComboBox = new com.mirth.connect.client.ui.components.MirthEditableComboBox();
-        locationURILabel = new javax.swing.JLabel();
-        locationURIComboBox = new com.mirth.connect.client.ui.components.MirthEditableComboBox();
-        socketTimeoutLabel = new javax.swing.JLabel();
-        socketTimeoutField = new com.mirth.connect.client.ui.components.MirthTextField();
-        headersLabel = new javax.swing.JLabel();
-        headersNewButton = new javax.swing.JButton();
-        headersPane = new javax.swing.JScrollPane();
-        headersTable = new com.mirth.connect.client.ui.components.MirthTable();
-        headersDeleteButton = new javax.swing.JButton();
+        wsdlUrlLabel = new JLabel("WSDL URL:");
 
-        setBackground(new java.awt.Color(255, 255, 255));
-        setBorder(javax.swing.BorderFactory.createEmptyBorder(1, 1, 1, 1));
+        KeyListener keyListener = new KeyAdapter() {
+            public void keyReleased(KeyEvent evt) {
+                urlFieldChanged();
+            }
+        };
+        wsdlUrlField = new MirthIconTextField();
+        wsdlUrlField.addKeyListener(keyListener);
 
-        wsdlUrlLabel.setText("WSDL URL:");
-
-        wsdlUrlField.setToolTipText("Enter the full URL to the WSDL describing the web service method to be called, and then click the Get Operations button.");
-
-        getOperationsButton.setText("Get Operations");
-        getOperationsButton.setToolTipText("<html>Clicking this button fetches the WSDL from the specified URL<br> and parses it to obtain a description of the data types and methods used by the web service to be called.<br>It replaces the values of all of the controls below by values taken from the WSDL.</html>");
-        getOperationsButton.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
+        getOperationsButton = new JButton("Get Operations");
+        getOperationsButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
                 getOperationsButtonActionPerformed(evt);
             }
         });
 
-        operationComboBox.setToolTipText("<html>Select the web service operation to be called from this list.<br>This is only used for generating the envelope</html>");
-
-        jLabel1.setText("Operation:");
-
-        serviceLabel.setText("Service:");
-
-        soapEnvelope.setBorder(javax.swing.BorderFactory.createEtchedBorder());
-        soapEnvelope.setMinimumSize(new java.awt.Dimension(26, 115));
-
-        portLabel.setText("Port / Endpoint:");
-
-        jLabel4.setText("SOAP Envelope:");
-
-        generateEnvelope.setText("Generate Envelope");
-        generateEnvelope.setToolTipText("<html>Clicking this button regenerates the contents of the SOAP Envelope control based on the<br>schema defined in the WSDL, discarding any changes that may have been made.<br>It also populates the SOAP Action field, if available.</html>");
-        generateEnvelope.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                generateEnvelopeActionPerformed(evt);
+        wsdlUrlTestConnectionButton = new JButton("Test Connection");
+        wsdlUrlTestConnectionButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                testConnectionButtonActionPerformed(true);
             }
         });
 
-        attachmentsLabel.setText("Attachments:");
-
-        attachmentsTable.setModel(new javax.swing.table.DefaultTableModel(
-            new Object [][] {
-
-            },
-            new String [] {
-                "ID", "Content", "MIME Type"
-            }
-        ) {
-            Class[] types = new Class [] {
-                java.lang.String.class, java.lang.String.class, java.lang.String.class
-            };
-
-            public Class getColumnClass(int columnIndex) {
-                return types [columnIndex];
-            }
-        });
-        attachmentsTable.setToolTipText("<html>Attachments should be added with an ID, Base64 encoded content,<br>and a valid MIME type. Once an attachment is added<br>the row can be dropped into an argument in the envelope.</html>");
-        attachmentsPane.setViewportView(attachmentsTable);
-
-        newButton.setText("New");
-        newButton.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                newButtonActionPerformed(evt);
-            }
-        });
-
-        deleteButton.setText("Delete");
-        deleteButton.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                deleteButtonActionPerformed(evt);
-            }
-        });
-
-        authenticationLabel.setText("Authentication:");
-
-        authenticationYesRadio.setBackground(new java.awt.Color(255, 255, 255));
-        authenticationButtonGroup.add(authenticationYesRadio);
-        authenticationYesRadio.setText("Yes");
-        authenticationYesRadio.setToolTipText("<html>Turning on authentication uses a username and password to get the WSDL, if necessary,<br>and uses the username and password binding provider properties when calling the web service.</html>");
-        authenticationYesRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-        authenticationYesRadio.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                authenticationYesRadioActionPerformed(evt);
-            }
-        });
-
-        authenticationNoRadio.setBackground(new java.awt.Color(255, 255, 255));
-        authenticationButtonGroup.add(authenticationNoRadio);
-        authenticationNoRadio.setText("No");
-        authenticationNoRadio.setToolTipText("<html>Turning on authentication uses a username and password to get the WSDL, if necessary,<br>and uses the username and password binding provider properties when calling the web service.</html>");
-        authenticationNoRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-        authenticationNoRadio.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                authenticationNoRadioActionPerformed(evt);
-            }
-        });
-
-        usernameLabel.setText("Username:");
-
-        usernameField.setToolTipText("The username used to get the WSDL and call the web service.");
-
-        passwordField.setToolTipText("The password used to get the WSDL and call the web service.");
-
-        passwordLabel.setText("Password:");
-
-        invocationTypeLabel.setText("Invocation Type:");
-
-        invocationTwoWayRadio.setBackground(new java.awt.Color(255, 255, 255));
-        invocationButtonGroup.add(invocationTwoWayRadio);
-        invocationTwoWayRadio.setText("Two-Way");
-        invocationTwoWayRadio.setToolTipText("<html>Invoke the operation using the standard two-way invocation function.<br>This will wait for some response or acknowledgement to be returned.</html>");
-        invocationTwoWayRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-
-        invocationOneWayRadio.setBackground(new java.awt.Color(255, 255, 255));
-        invocationButtonGroup.add(invocationOneWayRadio);
-        invocationOneWayRadio.setText("One-Way");
-        invocationOneWayRadio.setToolTipText("<html>Invoke the operation using the one-way invocation function.<br>This will not wait for any response, and should only be used if the<br>operation is defined as a one-way operation.</html>");
-        invocationOneWayRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-
-        useMtomLabel.setText("Use MTOM:");
-
-        useMtomYesRadio.setBackground(new java.awt.Color(255, 255, 255));
-        useMtomButtonGroup.add(useMtomYesRadio);
-        useMtomYesRadio.setText("Yes");
-        useMtomYesRadio.setToolTipText("<html>Enables MTOM on the SOAP Binding. If MTOM is enabled,<br>attachments can be added to the table below and dropped into the envelope.</html>");
-        useMtomYesRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-        useMtomYesRadio.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                useMtomYesRadioActionPerformed(evt);
-            }
-        });
-
-        useMtomNoRadio.setBackground(new java.awt.Color(255, 255, 255));
-        useMtomButtonGroup.add(useMtomNoRadio);
-        useMtomNoRadio.setSelected(true);
-        useMtomNoRadio.setText("No");
-        useMtomNoRadio.setToolTipText("<html>Does not enable MTOM on the SOAP Binding. If MTOM is enabled,<br>attachments can be added to the table below and dropped into the envelope.</html>");
-        useMtomNoRadio.setMargin(new java.awt.Insets(0, 0, 0, 0));
-        useMtomNoRadio.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                useMtomNoRadioActionPerformed(evt);
-            }
-        });
-
-        soapActionField.setBackground(new java.awt.Color(222, 222, 222));
-        soapActionField.setToolTipText("<html>The SOAPAction HTTP request header field can be used to indicate the intent of the SOAP HTTP request.<br>This field is optional for most web services, and will be auto-populated when you select an operation.</html>");
-
-        soapActionLabel.setText("SOAP Action:");
-
-        serviceComboBox.setBackground(new java.awt.Color(222, 222, 222));
-        serviceComboBox.setToolTipText("<html>The service name for the WSDL defined above. This field<br/>is filled in automatically when the Get Operations button<br/>is clicked and does not usually need to be changed,<br/>unless multiple services are defined in the WSDL.</html>");
-        serviceComboBox.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
+        serviceLabel = new JLabel("Service:");
+        serviceComboBox = new MirthEditableComboBox();
+        serviceComboBox.setBackground(UIConstants.COMBO_BOX_BACKGROUND);
+        serviceComboBox.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
                 serviceComboBoxActionPerformed(evt);
             }
         });
 
-        portComboBox.setBackground(new java.awt.Color(222, 222, 222));
-        portComboBox.setToolTipText("<html>The port / endpoint name for the service defined above.<br/>This field is filled in automatically when the Get Operations<br/>button is clicked and does not usually need to be changed,<br/>unless multiple endpoints are defined for the currently<br/>selected service in the WSDL.</html>");
-        portComboBox.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
+        portLabel = new JLabel("Port / Endpoint:");
+        portComboBox = new MirthEditableComboBox();
+        portComboBox.setBackground(UIConstants.COMBO_BOX_BACKGROUND);
+        portComboBox.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
                 portComboBoxActionPerformed(evt);
             }
         });
 
-        locationURILabel.setText("Location URI:");
+        locationURILabel = new JLabel("Location URI:");
+        locationURIComboBox = new MirthEditableComboBox();
+        locationURIComboBox.setBackground(UIConstants.COMBO_BOX_BACKGROUND);
 
-        locationURIComboBox.setBackground(new java.awt.Color(222, 222, 222));
-        locationURIComboBox.setToolTipText("<html>The dispatch location for the port / endpoint defined above.<br/>This field is filled in automatically when the Get Operations<br/>button is clicked and does not usually need to be changed.<br/>If left blank, the default URI defined in the WSDL will be used.</html>");
+        locationURITestConnectionButton = new JButton("Test Connection");
+        locationURITestConnectionButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                testConnectionButtonActionPerformed(false);
+            }
+        });
 
-        socketTimeoutLabel.setText("Socket Timeout (ms):");
+        socketTimeoutLabel = new JLabel("Socket Timeout (ms):");
+        socketTimeoutField = new MirthTextField();
 
-        socketTimeoutField.setToolTipText("<html>Sets the connection and socket timeout (SO_TIMEOUT) in<br/>milliseconds to be used when invoking the web service.<br/>A timeout value of zero is interpreted as an infinite timeout.</html>");
+        authenticationLabel = new JLabel("Authentication:");
+        ButtonGroup authenticationButtonGroup = new ButtonGroup();
 
-        headersLabel.setText("Headers:");
+        authenticationYesRadio = new MirthRadioButton("Yes");
+        authenticationYesRadio.setBackground(getBackground());
+        authenticationYesRadio.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                authenticationYesRadioActionPerformed(evt);
+            }
+        });
+        authenticationButtonGroup.add(authenticationYesRadio);
 
-        headersNewButton.setText("New");
-        headersNewButton.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
+        authenticationNoRadio = new MirthRadioButton("No");
+        authenticationNoRadio.setBackground(getBackground());
+        authenticationNoRadio.setText("No");
+        authenticationNoRadio.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                authenticationNoRadioActionPerformed(evt);
+            }
+        });
+        authenticationButtonGroup.add(authenticationNoRadio);
+
+        usernameLabel = new JLabel("Username:");
+        usernameField = new MirthTextField();
+
+        passwordLabel = new JLabel("Password:");
+        passwordField = new MirthPasswordField();
+
+        invocationTypeLabel = new JLabel("Invocation Type:");
+        ButtonGroup invocationButtonGroup = new ButtonGroup();
+
+        invocationOneWayRadio = new MirthRadioButton("One-Way");
+        invocationOneWayRadio.setBackground(getBackground());
+        invocationButtonGroup.add(invocationOneWayRadio);
+
+        invocationTwoWayRadio = new MirthRadioButton("Two-Way");
+        invocationTwoWayRadio.setBackground(getBackground());
+        invocationButtonGroup.add(invocationTwoWayRadio);
+
+        operationLabel = new JLabel("Operation:");
+        operationComboBox = new MirthComboBox();
+        operationComboBox.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String soapAction = "";
+
+                // Leave SOAP Action empty if Press Get Operations is selected
+                if (!WebServiceDispatcherProperties.WEBSERVICE_DEFAULT_DROPDOWN.equals(operationComboBox.getSelectedItem())) {
+                    String selectedOperation = (String) operationComboBox.getSelectedItem();
+
+                    if (currentServiceMap != null) {
+                        DefinitionPortMap portMap = currentServiceMap.getMap().get(serviceComboBox.getSelectedItem());
+
+                        if (portMap != null) {
+                            PortInformation portInfo = portMap.getMap().get(portComboBox.getSelectedItem());
+
+                            if (portInfo != null && CollectionUtils.isNotEmpty(portInfo.getOperations()) && CollectionUtils.isNotEmpty(portInfo.getActions())) {
+                                int index = portInfo.getOperations().indexOf(selectedOperation);
+
+                                if (index >= 0 && index < portInfo.getActions().size()) {
+                                    soapAction = portInfo.getActions().get(index);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                soapActionField.setText(soapAction);
+            }
+        });
+
+        generateEnvelopeButton = new JButton("Generate Envelope");
+        generateEnvelopeButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                generateEnvelopeActionPerformed(evt);
+            }
+        });
+
+        soapActionLabel = new JLabel("SOAP Action:");
+        soapActionField = new MirthIconTextField();
+        soapActionField.setBackground(UIConstants.COMBO_BOX_BACKGROUND);
+        soapActionField.addKeyListener(keyListener);
+
+        soapEnvelopeLabel = new JLabel("SOAP Envelope:");
+
+        soapEnvelopeTextArea = new MirthSyntaxTextArea(true);
+        soapEnvelopeTextArea.setBorder(BorderFactory.createEtchedBorder());
+        soapEnvelopeTextArea.setMinimumSize(new Dimension(26, 115));
+        SyntaxDocument document = new SyntaxDocument();
+        document.setTokenMarker(new XMLTokenMarker());
+        soapEnvelopeTextArea.setDocument(document);
+
+        headersLabel = new JLabel("Headers:");
+
+        headersTable = new MirthTable();
+        headersTable.setModel(new RefreshTableModel(new String[] { "Name", "Value" }, 0));
+
+        headersTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent evt) {
+                if (getSelectedRow(headersTable) != -1) {
+                    headerLastIndex = getSelectedRow(headersTable);
+                    headersDeleteButton.setEnabled(true);
+                } else {
+                    headersDeleteButton.setEnabled(false);
+                }
+            }
+        });
+
+        class WebServiceTableCellEditor extends TextFieldCellEditor {
+            boolean checkProperties;
+
+            public WebServiceTableCellEditor(boolean checkProperties) {
+                super();
+                this.checkProperties = checkProperties;
+            }
+
+            @Override
+            public boolean isCellEditable(EventObject evt) {
+                boolean editable = super.isCellEditable(evt);
+
+                if (editable) {
+                    headersDeleteButton.setEnabled(false);
+                }
+
+                return editable;
+            }
+
+            @Override
+            protected boolean valueChanged(String value) {
+                headersDeleteButton.setEnabled(true);
+
+                if (checkProperties && (value.length() == 0)) {
+                    return false;
+                }
+
+                parent.setSaveEnabled(true);
+                return true;
+            }
+        }
+
+        headersTable.getColumnModel().getColumn(headersTable.getColumnModel().getColumnIndex(NAME_COLUMN_NAME)).setCellEditor(new WebServiceTableCellEditor(true));
+        headersTable.getColumnModel().getColumn(headersTable.getColumnModel().getColumnIndex(VALUE_COLUMN_NAME)).setCellEditor(new WebServiceTableCellEditor(false));
+        headersTable.setCustomEditorControls(true);
+
+        headersTable.setSelectionMode(0);
+        headersTable.setRowSelectionAllowed(true);
+        headersTable.setRowHeight(UIConstants.ROW_HEIGHT);
+        headersTable.setDragEnabled(false);
+        headersTable.setOpaque(true);
+        headersTable.setSortable(false);
+        headersTable.setEditable(true);
+        headersTable.getTableHeader().setReorderingAllowed(false);
+
+        if (Preferences.userNodeForPackage(Mirth.class).getBoolean("highlightRows", true)) {
+            Highlighter highlighter = HighlighterFactory.createAlternateStriping(UIConstants.HIGHLIGHTER_COLOR, UIConstants.BACKGROUND_COLOR);
+            headersTable.setHighlighters(highlighter);
+        }
+
+        headersScrollPane = new JScrollPane(headersTable);
+        headersScrollPane.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent evt) {
+                deselectRows(headersTable, headersDeleteButton);
+            }
+        });
+
+        headersNewButton = new JButton("New");
+        headersNewButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
                 headersNewButtonActionPerformed(evt);
             }
         });
 
-        headersTable.setModel(new javax.swing.table.DefaultTableModel(
-            new Object [][] {
-
-            },
-            new String [] {
-                "Name", "Value"
-            }
-        ));
-        headersTable.setToolTipText("Header parameters are encoded as HTTP headers in the HTTP request sent to the server.");
-        headersPane.setViewportView(headersTable);
-
-        headersDeleteButton.setText("Delete");
-        headersDeleteButton.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
+        headersDeleteButton = new JButton("Delete");
+        headersDeleteButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
                 headersDeleteButtonActionPerformed(evt);
             }
         });
 
-        javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
-        this.setLayout(layout);
-        layout.setHorizontalGroup(
-            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(layout.createSequentialGroup()
-                .addContainerGap()
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addComponent(attachmentsLabel)
-                    .addComponent(socketTimeoutLabel)
-                    .addComponent(locationURILabel)
-                    .addComponent(authenticationLabel)
-                    .addComponent(soapActionLabel)
-                    .addComponent(jLabel4)
-                    .addComponent(portLabel)
-                    .addComponent(usernameLabel)
-                    .addComponent(jLabel1)
-                    .addComponent(serviceLabel)
-                    .addComponent(passwordLabel)
-                    .addComponent(invocationTypeLabel)
-                    .addComponent(wsdlUrlLabel)
-                    .addComponent(headersLabel)
-                    .addComponent(useMtomLabel))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
-                        .addComponent(wsdlUrlField, javax.swing.GroupLayout.DEFAULT_SIZE, 252, Short.MAX_VALUE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(getOperationsButton))
-                    .addComponent(soapEnvelope, javax.swing.GroupLayout.DEFAULT_SIZE, 396, Short.MAX_VALUE)
-                    .addComponent(soapActionField, javax.swing.GroupLayout.DEFAULT_SIZE, 396, Short.MAX_VALUE)
-                    .addComponent(serviceComboBox, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(portComboBox, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .addComponent(locationURIComboBox, javax.swing.GroupLayout.DEFAULT_SIZE, 396, Short.MAX_VALUE)
-                    .addGroup(layout.createSequentialGroup()
-                        .addComponent(headersPane, javax.swing.GroupLayout.DEFAULT_SIZE, 306, Short.MAX_VALUE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
-                            .addComponent(headersNewButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addComponent(headersDeleteButton)))
-                    .addGroup(layout.createSequentialGroup()
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(usernameField, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addComponent(passwordField, javax.swing.GroupLayout.PREFERRED_SIZE, 125, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(authenticationYesRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                .addComponent(authenticationNoRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(invocationTwoWayRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                .addComponent(invocationOneWayRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(operationComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, 186, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                .addComponent(generateEnvelope))
-                            .addComponent(socketTimeoutField, javax.swing.GroupLayout.PREFERRED_SIZE, 75, javax.swing.GroupLayout.PREFERRED_SIZE)
-                            .addGroup(layout.createSequentialGroup()
-                                .addComponent(useMtomYesRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                                .addComponent(useMtomNoRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)))
-                        .addGap(0, 0, Short.MAX_VALUE))
-                    .addGroup(layout.createSequentialGroup()
-                        .addComponent(attachmentsPane, javax.swing.GroupLayout.DEFAULT_SIZE, 306, Short.MAX_VALUE)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING, false)
-                            .addComponent(newButton, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addComponent(deleteButton))))
-                .addContainerGap())
-        );
-        layout.setVerticalGroup(
-            layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addGroup(layout.createSequentialGroup()
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(wsdlUrlLabel)
-                    .addComponent(getOperationsButton)
-                    .addComponent(wsdlUrlField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(serviceLabel)
-                    .addComponent(serviceComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(portLabel)
-                    .addComponent(portComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(locationURILabel)
-                    .addComponent(locationURIComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(socketTimeoutLabel)
-                    .addComponent(socketTimeoutField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(authenticationLabel)
-                    .addComponent(authenticationYesRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(authenticationNoRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(usernameLabel)
-                    .addComponent(usernameField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(passwordLabel)
-                    .addComponent(passwordField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(invocationTypeLabel)
-                    .addComponent(invocationTwoWayRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(invocationOneWayRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel1)
-                    .addComponent(operationComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(generateEnvelope))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(soapActionLabel)
-                    .addComponent(soapActionField, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jLabel4)
-                    .addComponent(soapEnvelope, javax.swing.GroupLayout.DEFAULT_SIZE, 115, Short.MAX_VALUE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(headersLabel)
-                    .addGroup(layout.createSequentialGroup()
-                        .addComponent(headersNewButton)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(headersDeleteButton))
-                    .addComponent(headersPane, javax.swing.GroupLayout.PREFERRED_SIZE, 80, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(useMtomLabel)
-                    .addComponent(useMtomYesRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(useMtomNoRadio, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(attachmentsLabel)
-                    .addGroup(layout.createSequentialGroup()
-                        .addComponent(newButton)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(deleteButton))
-                    .addComponent(attachmentsPane, javax.swing.GroupLayout.PREFERRED_SIZE, 80, javax.swing.GroupLayout.PREFERRED_SIZE))
-                .addContainerGap())
-        );
-    }// </editor-fold>//GEN-END:initComponents
-    // @formatter:on
+        useMtomLabel = new JLabel("Use MTOM:");
+        ButtonGroup useMtomButtonGroup = new ButtonGroup();
 
-    private void newButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_newButtonActionPerformed
+        useMtomYesRadio = new MirthRadioButton("Yes");
+        useMtomYesRadio.setBackground(getBackground());
+        useMtomYesRadio.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                useMtomYesRadioActionPerformed(evt);
+            }
+        });
+        useMtomButtonGroup.add(useMtomYesRadio);
+
+        useMtomNoRadio = new MirthRadioButton("No");
+        useMtomNoRadio.setBackground(getBackground());
+        useMtomNoRadio.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                useMtomNoRadioActionPerformed(evt);
+            }
+        });
+        useMtomButtonGroup.add(useMtomNoRadio);
+
+        attachmentsLabel = new JLabel("Attachments:");
+
+        attachmentsTable = new MirthTable();
+        attachmentsTable.setModel(new RefreshTableModel(new String[] { "ID", "Content",
+                "MIME Type" }, 0));
+
+        attachmentsTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent evt) {
+                if (attachmentsTable.getSelectedModelIndex() != -1) {
+                    attachmentsDeleteButton.setEnabled(true);
+                } else {
+                    attachmentsDeleteButton.setEnabled(false);
+                }
+            }
+        });
+
+        class AttachmentsTableCellEditor extends TextFieldCellEditor {
+
+            boolean checkUnique;
+
+            public AttachmentsTableCellEditor(boolean checkUnique) {
+                super();
+                this.checkUnique = checkUnique;
+            }
+
+            public boolean checkUnique(String value) {
+                boolean exists = false;
+
+                for (int i = 0; i < attachmentsTable.getModel().getRowCount(); i++) {
+                    if (((String) attachmentsTable.getModel().getValueAt(i, ID_COLUMN_NUMBER)).equalsIgnoreCase(value)) {
+                        exists = true;
+                    }
+                }
+
+                return exists;
+            }
+
+            @Override
+            public boolean isCellEditable(EventObject evt) {
+                boolean editable = super.isCellEditable(evt);
+
+                if (editable) {
+                    attachmentsDeleteButton.setEnabled(false);
+                }
+
+                return editable;
+            }
+
+            @Override
+            protected boolean valueChanged(String value) {
+                attachmentsDeleteButton.setEnabled(true);
+
+                if (checkUnique && (value.length() == 0 || checkUnique(value))) {
+                    return false;
+                }
+
+                parent.setSaveEnabled(true);
+                return true;
+            }
+        }
+
+        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(ID_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(true));
+        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(CONTENT_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(false));
+        attachmentsTable.getColumnModel().getColumn(attachmentsTable.getColumnModelIndex(MIME_TYPE_COLUMN_NAME)).setCellEditor(new AttachmentsTableCellEditor(false));
+        attachmentsTable.setCustomEditorControls(true);
+
+        attachmentsTable.setSelectionMode(0);
+        attachmentsTable.setRowSelectionAllowed(true);
+        attachmentsTable.setRowHeight(UIConstants.ROW_HEIGHT);
+        attachmentsTable.setDragEnabled(true);
+        attachmentsTable.setOpaque(true);
+        attachmentsTable.setSortable(true);
+        attachmentsTable.setEditable(true);
+
+        attachmentsTable.setTransferHandler(new TransferHandler() {
+
+            protected Transferable createTransferable(JComponent c) {
+                try {
+                    MirthTable table = ((MirthTable) (c));
+
+                    if (table == null) {
+                        return null;
+                    }
+
+                    int currRow = table.convertRowIndexToModel(table.getSelectedRow());
+
+                    String text = "";
+                    if (currRow >= 0 && currRow < table.getModel().getRowCount()) {
+                        text = (String) table.getModel().getValueAt(currRow, ID_COLUMN_NUMBER);
+                    }
+
+                    text = "<inc:Include href=\"cid:" + text + "\" xmlns:inc=\"http://www.w3.org/2004/08/xop/include\"/>";
+
+                    return new StringSelection(text);
+                } catch (ClassCastException cce) {
+                    return null;
+                }
+            }
+
+            public int getSourceActions(JComponent c) {
+                return COPY;
+            }
+
+            public boolean canImport(JComponent c, DataFlavor[] df) {
+                return false;
+            }
+        });
+
+        if (Preferences.userNodeForPackage(Mirth.class).getBoolean("highlightRows", true)) {
+            Highlighter highlighter = HighlighterFactory.createAlternateStriping(UIConstants.HIGHLIGHTER_COLOR, UIConstants.BACKGROUND_COLOR);
+            attachmentsTable.setHighlighters(highlighter);
+        }
+
+        attachmentsScrollPane = new JScrollPane(attachmentsTable);
+
+        attachmentsNewButton = new JButton("New");
+        attachmentsNewButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                newButtonActionPerformed(evt);
+            }
+        });
+
+        attachmentsDeleteButton = new JButton("Delete");
+        attachmentsDeleteButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent evt) {
+                deleteButtonActionPerformed(evt);
+            }
+        });
+
+        sslWarningPanel = new SSLWarningPanel();
+    }
+
+    protected void initToolTips() {
+        wsdlUrlField.setToolTipText("Enter the full URL to the WSDL describing the web service method to be called, and then click the Get Operations button.");
+        getOperationsButton.setToolTipText("<html>Clicking this button fetches the WSDL from the specified URL<br> and parses it to obtain a description of the data types and methods used by the web service to be called.<br>It replaces the values of all of the controls below by values taken from the WSDL.</html>");
+        serviceComboBox.setToolTipText("<html>The service name for the WSDL defined above. This field<br/>is filled in automatically when the Get Operations button<br/>is clicked and does not usually need to be changed,<br/>unless multiple services are defined in the WSDL.</html>");
+        portComboBox.setToolTipText("<html>The port / endpoint name for the service defined above.<br/>This field is filled in automatically when the Get Operations<br/>button is clicked and does not usually need to be changed,<br/>unless multiple endpoints are defined for the currently<br/>selected service in the WSDL.</html>");
+        locationURIComboBox.setToolTipText("<html>The dispatch location for the port / endpoint defined above.<br/>This field is filled in automatically when the Get Operations<br/>button is clicked and does not usually need to be changed.<br/>If left blank, the default URI defined in the WSDL will be used.</html>");
+        socketTimeoutField.setToolTipText("<html>Sets the connection and socket timeout (SO_TIMEOUT) in<br/>milliseconds to be used when invoking the web service.<br/>A timeout value of zero is interpreted as an infinite timeout.</html>");
+        authenticationYesRadio.setToolTipText("<html>Turning on authentication uses a username and password to get the WSDL, if necessary,<br>and uses the username and password binding provider properties when calling the web service.</html>");
+        authenticationNoRadio.setToolTipText("<html>Turning on authentication uses a username and password to get the WSDL, if necessary,<br>and uses the username and password binding provider properties when calling the web service.</html>");
+        usernameField.setToolTipText("The username used to get the WSDL and call the web service.");
+        passwordField.setToolTipText("The password used to get the WSDL and call the web service.");
+        invocationOneWayRadio.setToolTipText("<html>Invoke the operation using the one-way invocation function.<br>This will not wait for any response, and should only be used if the<br>operation is defined as a one-way operation.</html>");
+        invocationTwoWayRadio.setToolTipText("<html>Invoke the operation using the standard two-way invocation function.<br>This will wait for some response or acknowledgement to be returned.</html>");
+        operationComboBox.setToolTipText("<html>Select the web service operation to be called from this list.<br>This is only used for generating the envelope</html>");
+        generateEnvelopeButton.setToolTipText("<html>Clicking this button regenerates the contents of the SOAP Envelope control based on the<br>schema defined in the WSDL, discarding any changes that may have been made.<br>It also populates the SOAP Action field, if available.</html>");
+        soapActionField.setToolTipText("<html>The SOAPAction HTTP request header field can be used to indicate the intent of the SOAP HTTP request.<br>This field is optional for most web services, and will be auto-populated when you select an operation.</html>");
+        headersTable.setToolTipText("Header parameters are encoded as HTTP headers in the HTTP request sent to the server.");
+        useMtomYesRadio.setToolTipText("<html>Enables MTOM on the SOAP Binding. If MTOM is enabled,<br>attachments can be added to the table below and dropped into the envelope.</html>");
+        useMtomNoRadio.setToolTipText("<html>Does not enable MTOM on the SOAP Binding. If MTOM is enabled,<br>attachments can be added to the table below and dropped into the envelope.</html>");
+        attachmentsTable.setToolTipText("<html>Attachments should be added with an ID, Base64 encoded content,<br>and a valid MIME type. Once an attachment is added<br>the row can be dropped into an argument in the envelope.</html>");
+    }
+
+    protected void initLayout() {
+        setLayout(new MigLayout("insets 0, novisualpadding, hidemode 3, fill, gapy 6", "[]12[grow][]"));
+
+        add(wsdlUrlLabel, "right");
+        add(wsdlUrlField, "growx, sx, split 3");
+        add(getOperationsButton);
+        add(wsdlUrlTestConnectionButton);
+        add(serviceLabel, "newline, right");
+        add(serviceComboBox, "growx, sx");
+        add(portLabel, "newline, right");
+        add(portComboBox, "growx, sx");
+        add(locationURILabel, "newline, right");
+        add(locationURIComboBox, "growx, sx, split 2");
+        add(locationURITestConnectionButton);
+        add(socketTimeoutLabel, "newline, right");
+        add(socketTimeoutField, "w 75!");
+        add(authenticationLabel, "newline, right");
+        add(authenticationYesRadio, "split 2");
+        add(authenticationNoRadio);
+        add(usernameLabel, "newline, right");
+        add(usernameField, "w 125!");
+        add(passwordLabel, "newline, right");
+        add(passwordField, "w 125!");
+        add(invocationTypeLabel, "newline, right");
+        add(invocationOneWayRadio, "split 2");
+        add(invocationTwoWayRadio);
+        add(operationLabel, "newline, right");
+        add(operationComboBox, "split 2");
+        add(generateEnvelopeButton);
+        add(soapActionLabel, "newline, right");
+        add(soapActionField, "growx, sx");
+        add(soapEnvelopeLabel, "newline, top, right");
+        add(soapEnvelopeTextArea, "grow, push, sx");
+        add(headersLabel, "newline, top, right");
+        add(headersScrollPane, "top, growx, pushx, h 80!");
+        add(headersNewButton, "top, flowy, split 2, w 50!");
+        add(headersDeleteButton, "w 50!");
+        add(useMtomLabel, "newline, right");
+        add(useMtomYesRadio, "split 2");
+        add(useMtomNoRadio);
+        add(attachmentsLabel, "newline, top, right");
+        add(attachmentsScrollPane, "top, growx, pushx, h 80!");
+        add(attachmentsNewButton, "top, flowy, split 2, w 50!");
+        add(attachmentsDeleteButton, "w 50!");
+    }
+
+    private void newButtonActionPerformed(ActionEvent evt) {
         stopCellEditing();
         ((DefaultTableModel) attachmentsTable.getModel()).addRow(new Object[] {
                 getNewAttachmentId(attachmentsTable.getModel().getRowCount() + 1), "" });
         int newViewIndex = attachmentsTable.convertRowIndexToView(attachmentsTable.getModel().getRowCount() - 1);
         attachmentsTable.setRowSelectionInterval(newViewIndex, newViewIndex);
 
-        attachmentsPane.getViewport().setViewPosition(new Point(0, attachmentsTable.getRowHeight() * attachmentsTable.getModel().getRowCount()));
+        attachmentsScrollPane.getViewport().setViewPosition(new Point(0, attachmentsTable.getRowHeight() * attachmentsTable.getModel().getRowCount()));
         parent.setSaveEnabled(true);
-    }//GEN-LAST:event_newButtonActionPerformed
+    }
 
-    private void deleteButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_deleteButtonActionPerformed
+    private void deleteButtonActionPerformed(ActionEvent evt) {
         stopCellEditing();
 
         int selectedModelIndex = attachmentsTable.getSelectedModelIndex();
@@ -1111,16 +1006,16 @@ public class WebServiceSender extends ConnectorSettingsPanel {
 
         if (attachmentsTable.getModel().getRowCount() == 0) {
             attachmentsTable.clearSelection();
-            deleteButton.setEnabled(false);
+            attachmentsDeleteButton.setEnabled(false);
         } else {
             attachmentsTable.setRowSelectionInterval(newViewIndex, newViewIndex);
         }
 
         parent.setSaveEnabled(true);
-    }//GEN-LAST:event_deleteButtonActionPerformed
+    }
 
-    private void getOperationsButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_getOperationsButtonActionPerformed
-        if (StringUtils.isNotBlank((String) serviceComboBox.getSelectedItem()) || StringUtils.isNotBlank((String) portComboBox.getSelectedItem()) || StringUtils.isNotBlank((String) locationURIComboBox.getSelectedItem()) || !isDefaultOperations()) {
+    private void getOperationsButtonActionPerformed(ActionEvent evt) {
+        if (StringUtils.isNotBlank((String) serviceComboBox.getEditor().getItem()) || StringUtils.isNotBlank((String) portComboBox.getEditor().getItem()) || StringUtils.isNotBlank((String) locationURIComboBox.getEditor().getItem()) || !isDefaultOperations()) {
             if (!parent.alertOkCancel(parent, "This will replace your current service, port, location URI, and operation list. Press OK to continue.")) {
                 return;
             }
@@ -1130,10 +1025,15 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         currentServiceMap = null;
         serviceComboBox.setModel(new DefaultComboBoxModel());
         portComboBox.setModel(new DefaultComboBoxModel());
-        locationURIComboBox.setModel(new DefaultComboBoxModel());
-        operationComboBox.setModel(new DefaultComboBoxModel(new String[] { WebServiceDispatcherProperties.WEBSERVICE_DEFAULT_DROPDOWN }));
+
+        if (canSetLocationURI()) {
+            locationURIComboBox.setModel(new DefaultComboBoxModel());
+        }
+
+        operationComboBox.setModel(new DefaultComboBoxModel(new String[] {
+                WebServiceDispatcherProperties.WEBSERVICE_DEFAULT_DROPDOWN }));
         operationComboBox.setSelectedIndex(0);
-        generateEnvelope.setEnabled(false);
+        generateEnvelopeButton.setEnabled(false);
 
         ResponseHandler handler = new ResponseHandler() {
             @Override
@@ -1168,17 +1068,71 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         } catch (ClientException e) {
             // Should not happen
         }
-    }//GEN-LAST:event_getOperationsButtonActionPerformed
+    }
 
-    private void authenticationYesRadioActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_authenticationYesRadioActionPerformed
+    protected boolean canTestConnection(boolean wsdlUrl) {
+        if (wsdlUrl) {
+            if (StringUtils.isBlank(wsdlUrlField.getText())) {
+                parent.alertError(parent, "WSDL URL is blank.");
+                return false;
+            }
+        } else if (StringUtils.isBlank(String.valueOf(locationURIComboBox.getSelectedItem()))) {
+            parent.alertError(parent, "Location URI is blank.");
+            return false;
+        }
+
+        return true;
+    }
+
+    protected WebServiceDispatcherProperties getTestConnectionPropeties() {
+        return (WebServiceDispatcherProperties) getFilledProperties();
+    }
+
+    private void testConnectionButtonActionPerformed(boolean wsdlUrl) {
+        if (!canTestConnection(wsdlUrl)) {
+            return;
+        }
+
+        WebServiceDispatcherProperties properties = getTestConnectionPropeties();
+
+        // Blank out the other property so that it isn't tested
+        if (wsdlUrl) {
+            properties.setLocationURI("");
+        } else {
+            properties.setWsdlUrl("");
+        }
+
+        ResponseHandler handler = new ResponseHandler() {
+            @Override
+            public void handle(Object response) {
+                ConnectionTestResponse connectionTestResponse = (ConnectionTestResponse) response;
+
+                if (connectionTestResponse == null) {
+                    parent.alertError(parent, "Failed to invoke service.");
+                } else if (connectionTestResponse.getType().equals(ConnectionTestResponse.Type.SUCCESS)) {
+                    parent.alertInformation(parent, connectionTestResponse.getMessage());
+                } else {
+                    parent.alertWarning(parent, connectionTestResponse.getMessage());
+                }
+            }
+        };
+
+        try {
+            getServlet(WebServiceConnectorServletInterface.class, "Testing connection...", "Error testing Web Service connection: ", handler).testConnection(getChannelId(), getChannelName(), properties);
+        } catch (ClientException e) {
+            // Should not happen
+        }
+    }
+
+    private void authenticationYesRadioActionPerformed(ActionEvent evt) {
         usernameLabel.setEnabled(true);
         usernameField.setEnabled(true);
 
         passwordLabel.setEnabled(true);
         passwordField.setEnabled(true);
-    }//GEN-LAST:event_authenticationYesRadioActionPerformed
+    }
 
-    private void authenticationNoRadioActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_authenticationNoRadioActionPerformed
+    private void authenticationNoRadioActionPerformed(ActionEvent evt) {
         usernameLabel.setEnabled(false);
         usernameField.setEnabled(false);
         usernameField.setText("");
@@ -1186,42 +1140,51 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         passwordLabel.setEnabled(false);
         passwordField.setEnabled(false);
         passwordField.setText("");
-    }//GEN-LAST:event_authenticationNoRadioActionPerformed
+    }
 
-    private void useMtomYesRadioActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_useMtomYesRadioActionPerformed
+    private void useMtomYesRadioActionPerformed(ActionEvent evt) {
         attachmentsLabel.setEnabled(true);
-        attachmentsPane.setEnabled(true);
+        attachmentsScrollPane.setEnabled(true);
         attachmentsTable.setEnabled(true);
-        newButton.setEnabled(true);
+        attachmentsNewButton.setEnabled(true);
 
         attachmentsTable.setRowSelectionAllowed(true);
         if (attachmentsTable.getModel().getRowCount() > 0) {
             attachmentsTable.setRowSelectionInterval(0, 0);
-            deleteButton.setEnabled(true);
+            attachmentsDeleteButton.setEnabled(true);
         }
 
-    }//GEN-LAST:event_useMtomYesRadioActionPerformed
+    }
 
-    private void useMtomNoRadioActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_useMtomNoRadioActionPerformed
+    private void useMtomNoRadioActionPerformed(ActionEvent evt) {
         attachmentsLabel.setEnabled(false);
-        attachmentsPane.setEnabled(false);
+        attachmentsScrollPane.setEnabled(false);
         attachmentsTable.setEnabled(false);
-        newButton.setEnabled(false);
-        deleteButton.setEnabled(false);
+        attachmentsNewButton.setEnabled(false);
+        attachmentsDeleteButton.setEnabled(false);
 
         stopCellEditing();
         attachmentsTable.setRowSelectionAllowed(false);
         attachmentsTable.clearSelection();
-    }//GEN-LAST:event_useMtomNoRadioActionPerformed
+    }
 
-    private void generateEnvelopeActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_generateEnvelopeActionPerformed
-        if (soapEnvelope.getText().length() > 0 || soapActionField.getText().length() > 0) {
+    private void generateEnvelopeActionPerformed(ActionEvent evt) {
+        generateEnvelope();
+    }
+
+    protected void generateEnvelope() {
+        generateEnvelope(((WebServiceDispatcherProperties) getFilledProperties()).getWsdlUrl(), getChannelId(), getChannelName(), true);
+    }
+
+    protected void generateEnvelope(String wsdlUrl, String channelId, String channelName, boolean buildOptional) {
+        if (soapEnvelopeTextArea.getText().length() > 0 || soapActionField.getText().length() > 0) {
             if (!parent.alertOkCancel(parent, "This will replace your current SOAP envelope and SOAP action. Press OK to continue.")) {
                 return;
             }
         }
 
         final WebServiceDispatcherProperties props = (WebServiceDispatcherProperties) getFilledProperties();
+        props.setWsdlUrl(wsdlUrl);
 
         ResponseHandler isWsdlCachedHandler = new ResponseHandler() {
             @Override
@@ -1231,11 +1194,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
                         ResponseHandler generateEnvelopeHandler = new ResponseHandler() {
                             @Override
                             public void handle(Object response) {
-                                String generatedEnvelope = (String) response;
-                                if (generatedEnvelope != null) {
-                                    soapEnvelope.setText(generatedEnvelope);
-                                    parent.setSaveEnabled(true);
-                                }
+                                setSoapEnvelopeText((String) response);
 
                                 ResponseHandler getSoapActionHandler = new ResponseHandler() {
                                     @Override
@@ -1250,7 +1209,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
                                 };
 
                                 try {
-                                    getServlet(WebServiceConnectorServletInterface.class, "Retrieving SOAP action...", "There was an error retrieving the SOAP action.\n\n", getSoapActionHandler).getSoapAction(getChannelId(), getChannelName(), props.getWsdlUrl(), props.getUsername(), props.getPassword(), props.getService(), props.getPort(), props.getOperation());
+                                    getServlet(WebServiceConnectorServletInterface.class, "Retrieving SOAP action...", "There was an error retrieving the SOAP action.\n\n", getSoapActionHandler).getSoapAction(channelId, channelName, props.getWsdlUrl(), props.getUsername(), props.getPassword(), props.getService(), props.getPort(), props.getOperation());
                                 } catch (ClientException e) {
                                     // Should not happen
                                 }
@@ -1258,7 +1217,7 @@ public class WebServiceSender extends ConnectorSettingsPanel {
                         };
 
                         try {
-                            getServlet(WebServiceConnectorServletInterface.class, "Generating envelope...", "There was an error generating the envelope.\n\n", generateEnvelopeHandler).generateEnvelope(getChannelId(), getChannelName(), props.getWsdlUrl(), props.getUsername(), props.getPassword(), props.getService(), props.getPort(), props.getOperation());
+                            getServlet(WebServiceConnectorServletInterface.class, "Generating envelope...", "There was an error generating the envelope.\n\n", generateEnvelopeHandler).generateEnvelope(channelId, channelName, props.getWsdlUrl(), props.getUsername(), props.getPassword(), props.getService(), props.getPort(), props.getOperation(), buildOptional);
                         } catch (ClientException e) {
                             // Should not happen
                         }
@@ -1270,17 +1229,24 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         };
 
         try {
-            getServlet(WebServiceConnectorServletInterface.class, "Checking if WSDL is cached...", "Error checking if the wsdl is cached: ", isWsdlCachedHandler).isWsdlCached(getChannelId(), getChannelName(), props.getWsdlUrl(), props.getUsername(), props.getPassword());
+            getServlet(WebServiceConnectorServletInterface.class, "Checking if WSDL is cached...", "Error checking if the wsdl is cached: ", isWsdlCachedHandler).isWsdlCached(channelId, channelName, props.getWsdlUrl(), props.getUsername(), props.getPassword());
         } catch (ClientException e) {
             // Should not happen
         }
-    }//GEN-LAST:event_generateEnvelopeActionPerformed
+    }
 
-    private void serviceComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_serviceComboBoxActionPerformed
-        String selectedPort = (String) portComboBox.getSelectedItem();
+    protected void setSoapEnvelopeText(String text) {
+        if (text != null) {
+            soapEnvelopeTextArea.setText(text);
+            parent.setSaveEnabled(true);
+        }
+    }
+
+    private void serviceComboBoxActionPerformed(ActionEvent evt) {
+        String selectedPort = (String) portComboBox.getEditor().getItem();
 
         if (currentServiceMap != null) {
-            DefinitionPortMap portMap = currentServiceMap.getMap().get((String) serviceComboBox.getSelectedItem());
+            DefinitionPortMap portMap = currentServiceMap.getMap().get((String) serviceComboBox.getEditor().getItem());
 
             if (portMap != null) {
                 portComboBox.setModel(new DefaultComboBoxModel(portMap.getMap().keySet().toArray()));
@@ -1294,15 +1260,15 @@ public class WebServiceSender extends ConnectorSettingsPanel {
         } else if (portComboBox.getModel().getSize() > 0) {
             portComboBox.setSelectedIndex(0);
         }
-    }//GEN-LAST:event_serviceComboBoxActionPerformed
+    }
 
-    private void portComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_portComboBoxActionPerformed
+    private void portComboBoxActionPerformed(ActionEvent evt) {
         if (currentServiceMap != null) {
-            DefinitionPortMap portMap = currentServiceMap.getMap().get((String) serviceComboBox.getSelectedItem());
+            DefinitionPortMap portMap = currentServiceMap.getMap().get((String) serviceComboBox.getEditor().getItem());
 
             if (portMap != null) {
-                PortInformation portInformation = portMap.getMap().get((String) portComboBox.getSelectedItem());
-                String selectedLocationURI = (String) locationURIComboBox.getSelectedItem();
+                PortInformation portInformation = portMap.getMap().get((String) portComboBox.getEditor().getItem());
+                String selectedLocationURI = (String) locationURIComboBox.getEditor().getItem();
 
                 if (portInformation != null) {
                     List<String> operationList = portInformation.getOperations();
@@ -1317,36 +1283,45 @@ public class WebServiceSender extends ConnectorSettingsPanel {
                             operationComboBox.setSelectedIndex(0);
                         }
 
-                        generateEnvelope.setEnabled(!isDefaultOperations());
+                        updateGenerateEnvelopeButtonEnabled();
                     } else {
                         operationComboBox.setModel(new DefaultComboBoxModel());
                     }
 
-                    if (StringUtils.isNotBlank(portInformation.getLocationURI())) {
-                        locationURIComboBox.setModel(new DefaultComboBoxModel(new String[] { portInformation.getLocationURI() }));
-                    } else {
-                        locationURIComboBox.setModel(new DefaultComboBoxModel());
+                    if (canSetLocationURI()) {
+                        if (StringUtils.isNotBlank(portInformation.getLocationURI())) {
+                            locationURIComboBox.setModel(new DefaultComboBoxModel(new String[] {
+                                    portInformation.getLocationURI() }));
+                        } else {
+                            locationURIComboBox.setModel(new DefaultComboBoxModel());
+                        }
                     }
                 } else {
-                    locationURIComboBox.setModel(new DefaultComboBoxModel());
+                    if (canSetLocationURI()) {
+                        locationURIComboBox.setModel(new DefaultComboBoxModel());
+                    }
                     operationComboBox.setModel(new DefaultComboBoxModel());
                 }
 
-                if (StringUtils.isNotBlank(selectedLocationURI)) {
+                if (canSetLocationURI() && StringUtils.isNotBlank(selectedLocationURI)) {
                     locationURIComboBox.setSelectedItem(selectedLocationURI);
                 }
             }
         }
-    }//GEN-LAST:event_portComboBoxActionPerformed
+    }
 
-    private void headersNewButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_headersNewButtonActionPerformed
+    protected void updateGenerateEnvelopeButtonEnabled() {
+        generateEnvelopeButton.setEnabled(!isDefaultOperations());
+    }
+
+    private void headersNewButtonActionPerformed(ActionEvent evt) {
         ((DefaultTableModel) headersTable.getModel()).addRow(new Object[] {
                 getNewPropertyName(headersTable), "" });
         headersTable.setRowSelectionInterval(headersTable.getRowCount() - 1, headersTable.getRowCount() - 1);
         parent.setSaveEnabled(true);
-    }//GEN-LAST:event_headersNewButtonActionPerformed
+    }
 
-    private void headersDeleteButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_headersDeleteButtonActionPerformed
+    private void headersDeleteButtonActionPerformed(ActionEvent evt) {
         if (getSelectedRow(headersTable) != -1 && !headersTable.isEditing()) {
             ((DefaultTableModel) headersTable.getModel()).removeRow(getSelectedRow(headersTable));
 
@@ -1362,52 +1337,50 @@ public class WebServiceSender extends ConnectorSettingsPanel {
 
             parent.setSaveEnabled(true);
         }
-    }//GEN-LAST:event_headersDeleteButtonActionPerformed
+    }
 
-    // Variables declaration - do not modify//GEN-BEGIN:variables
-    private javax.swing.JLabel attachmentsLabel;
-    private javax.swing.JScrollPane attachmentsPane;
-    private com.mirth.connect.client.ui.components.MirthTable attachmentsTable;
-    private javax.swing.ButtonGroup authenticationButtonGroup;
-    private javax.swing.JLabel authenticationLabel;
-    private com.mirth.connect.client.ui.components.MirthRadioButton authenticationNoRadio;
-    private com.mirth.connect.client.ui.components.MirthRadioButton authenticationYesRadio;
-    private javax.swing.JButton deleteButton;
-    private javax.swing.JButton generateEnvelope;
-    private javax.swing.JButton getOperationsButton;
-    private javax.swing.JButton headersDeleteButton;
-    private javax.swing.JLabel headersLabel;
-    private javax.swing.JButton headersNewButton;
-    private javax.swing.JScrollPane headersPane;
-    private com.mirth.connect.client.ui.components.MirthTable headersTable;
-    private javax.swing.ButtonGroup invocationButtonGroup;
-    private com.mirth.connect.client.ui.components.MirthRadioButton invocationOneWayRadio;
-    private com.mirth.connect.client.ui.components.MirthRadioButton invocationTwoWayRadio;
-    private javax.swing.JLabel invocationTypeLabel;
-    private javax.swing.JLabel jLabel1;
-    private javax.swing.JLabel jLabel4;
-    private com.mirth.connect.client.ui.components.MirthEditableComboBox locationURIComboBox;
-    private javax.swing.JLabel locationURILabel;
-    private javax.swing.JButton newButton;
-    private com.mirth.connect.client.ui.components.MirthComboBox operationComboBox;
-    private com.mirth.connect.client.ui.components.MirthPasswordField passwordField;
-    private javax.swing.JLabel passwordLabel;
-    private com.mirth.connect.client.ui.components.MirthEditableComboBox portComboBox;
-    private javax.swing.JLabel portLabel;
-    private com.mirth.connect.client.ui.components.MirthEditableComboBox serviceComboBox;
-    private javax.swing.JLabel serviceLabel;
-    private com.mirth.connect.client.ui.components.MirthIconTextField soapActionField;
-    private javax.swing.JLabel soapActionLabel;
-    private com.mirth.connect.client.ui.components.MirthSyntaxTextArea soapEnvelope;
-    private com.mirth.connect.client.ui.components.MirthTextField socketTimeoutField;
-    private javax.swing.JLabel socketTimeoutLabel;
-    private javax.swing.ButtonGroup useMtomButtonGroup;
-    private javax.swing.JLabel useMtomLabel;
-    private com.mirth.connect.client.ui.components.MirthRadioButton useMtomNoRadio;
-    private com.mirth.connect.client.ui.components.MirthRadioButton useMtomYesRadio;
-    private com.mirth.connect.client.ui.components.MirthTextField usernameField;
-    private javax.swing.JLabel usernameLabel;
-    private com.mirth.connect.client.ui.components.MirthIconTextField wsdlUrlField;
-    private javax.swing.JLabel wsdlUrlLabel;
-    // End of variables declaration//GEN-END:variables
+    protected JLabel wsdlUrlLabel;
+    protected MirthIconTextField wsdlUrlField;
+    protected JButton getOperationsButton;
+    protected JButton wsdlUrlTestConnectionButton;
+    protected JLabel serviceLabel;
+    protected MirthEditableComboBox serviceComboBox;
+    protected JLabel portLabel;
+    protected MirthEditableComboBox portComboBox;
+    protected JLabel locationURILabel;
+    protected MirthEditableComboBox locationURIComboBox;
+    protected JButton locationURITestConnectionButton;
+    protected JLabel socketTimeoutLabel;
+    protected MirthTextField socketTimeoutField;
+    protected JLabel authenticationLabel;
+    protected MirthRadioButton authenticationYesRadio;
+    protected MirthRadioButton authenticationNoRadio;
+    protected JLabel usernameLabel;
+    protected MirthTextField usernameField;
+    protected JLabel passwordLabel;
+    protected MirthPasswordField passwordField;
+    protected JLabel invocationTypeLabel;
+    protected MirthRadioButton invocationOneWayRadio;
+    protected MirthRadioButton invocationTwoWayRadio;
+    protected JLabel operationLabel;
+    protected MirthComboBox operationComboBox;
+    protected JButton generateEnvelopeButton;
+    protected JLabel soapActionLabel;
+    protected MirthIconTextField soapActionField;
+    protected JLabel soapEnvelopeLabel;
+    protected MirthSyntaxTextArea soapEnvelopeTextArea;
+    protected JLabel headersLabel;
+    protected MirthTable headersTable;
+    protected JScrollPane headersScrollPane;
+    protected JButton headersNewButton;
+    protected JButton headersDeleteButton;
+    protected JLabel useMtomLabel;
+    protected MirthRadioButton useMtomYesRadio;
+    protected MirthRadioButton useMtomNoRadio;
+    protected JLabel attachmentsLabel;
+    protected MirthTable attachmentsTable;
+    protected JScrollPane attachmentsScrollPane;
+    protected JButton attachmentsNewButton;
+    protected JButton attachmentsDeleteButton;
+    protected SSLWarningPanel sslWarningPanel;
 }

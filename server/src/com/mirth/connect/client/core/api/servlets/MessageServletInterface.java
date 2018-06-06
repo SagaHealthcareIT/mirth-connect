@@ -9,6 +9,10 @@
 
 package com.mirth.connect.client.core.api.servlets;
 
+import io.swagger.annotations.Api;
+import io.swagger.annotations.ApiOperation;
+import io.swagger.annotations.ApiParam;
+
 import java.util.Calendar;
 import java.util.List;
 import java.util.Set;
@@ -43,10 +47,6 @@ import com.mirth.connect.model.filters.MessageFilter;
 import com.mirth.connect.util.messagewriter.EncryptionType;
 import com.mirth.connect.util.messagewriter.MessageWriterOptions;
 
-import io.swagger.annotations.Api;
-import io.swagger.annotations.ApiOperation;
-import io.swagger.annotations.ApiParam;
-
 @Path("/channels")
 @Api("Messages")
 @Consumes(MediaType.APPLICATION_XML)
@@ -58,7 +58,7 @@ public interface MessageServletInterface extends BaseServletInterface {
     @Consumes(MediaType.TEXT_PLAIN)
     @ApiOperation("Processes a new message through a channel.")
     @MirthOperation(name = "processMessages", display = "Process messages", permission = Permissions.MESSAGES_PROCESS, type = ExecuteType.ASYNC)
-    public void processMessage(// @formatter:off
+    public Long processMessage(// @formatter:off
             @Param("channelId") @ApiParam(value = "The ID of the channel.", required = true) @PathParam("channelId") String channelId,
             @Param("rawData") @ApiParam(value = "The raw message data to process.", required = true) String rawData,
             @Param("destinationMetaDataIds") @ApiParam(value = "Indicates which destinations to send the message to.") @QueryParam("destinationMetaDataId") Set<Integer> destinationMetaDataIds,
@@ -69,10 +69,10 @@ public interface MessageServletInterface extends BaseServletInterface {
     // @formatter:on
 
     @POST
-    @Path("/{channelId}/messages")
+    @Path("/{channelId}/messagesWithObj")
     @ApiOperation("Processes a new message through a channel, using the RawMessage object.")
     @MirthOperation(name = "processMessages", display = "Process messages", permission = Permissions.MESSAGES_PROCESS, type = ExecuteType.ASYNC)
-    public void processMessage(// @formatter:off
+    public Long processMessage(// @formatter:off
             @Param("channelId") @ApiParam(value = "The ID of the channel.", required = true) @PathParam("channelId") String channelId,
             @Param("rawMessage") @ApiParam(value = "The RawMessage object to process.", required = true) RawMessage rawMessage) throws ClientException;
     // @formatter:on
@@ -237,8 +237,8 @@ public interface MessageServletInterface extends BaseServletInterface {
     // @formatter:on
 
     @POST
-    @Path("/{channelId}/messages/_reprocess")
-    @ApiOperation("Reprocesses messages through a channel by specific filter criteria.")
+    @Path("/{channelId}/messages/_reprocessWithFilter")
+    @ApiOperation("Reprocesses messages through a channel filtering with a MessageFilter.")
     @MirthOperation(name = "reprocessMessages", display = "Reprocess messages", permission = Permissions.MESSAGES_REPROCESS_RESULTS, type = ExecuteType.ASYNC)
     public void reprocessMessages(// @formatter:off
             @Param("channelId") @ApiParam(value = "The ID of the channel.", required = true) @PathParam("channelId") String channelId,
@@ -412,7 +412,7 @@ public interface MessageServletInterface extends BaseServletInterface {
     // @formatter:on
 
     @POST
-    @Path("/{channelId}/messages/_import")
+    @Path("/{channelId}/messages/_importFromPath")
     @Consumes(MediaType.TEXT_PLAIN)
     @ApiOperation("Imports messages into a channel from a path accessible by the server. The messages will not actually be processed through the channel, only imported.")
     @MirthOperation(name = "importMessageServer", display = "Import messages on the server", permission = Permissions.MESSAGES_IMPORT, type = ExecuteType.ASYNC)
@@ -423,7 +423,7 @@ public interface MessageServletInterface extends BaseServletInterface {
     // @formatter:on
 
     @POST
-    @Path("/{channelId}/messages/_export")
+    @Path("/{channelId}/messages/_exportUsingFilter")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @ApiOperation("Exports messages into a specific directory path accessible by the server.")
     @MirthOperation(name = "exportMessage", display = "Export message", permission = Permissions.MESSAGES_EXPORT_SERVER, type = ExecuteType.ASYNC)

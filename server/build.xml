@@ -81,6 +81,12 @@
 
 		<javac srcdir="${src}" destdir="${classes}" debug="on" includeAntRuntime="false">
 			<classpath refid="classpath" />
+			<!-- Uncomment the following and add additional dashes in front of the arguments to allow Java 9+
+				<compilerarg value="-add-modules" />
+				<compilerarg value="java.sql.rowset,java.xml.ws" />
+				<compilerarg value="-add-exports" />
+				<compilerarg value="java.sql.rowset/com.sun.rowset=ALL-UNNAMED" />
+			-->
 		</javac>
 
 		<!-- create version.properties file -->
@@ -109,6 +115,7 @@
 			<include name="com/mirth/connect/util/**" />
 			<include name="org/mozilla/**" />
 			<include name="org/glassfish/jersey/**" />
+			<include name="de/**" />
 
 			<include name="version.properties" />
 		</jar>
@@ -181,6 +188,7 @@
 		<jar destfile="${connectors.file}/file-shared.jar" basedir="${classes}">
 			<include name="com/mirth/connect/connectors/file/SchemeProperties.class" />
 			<include name="com/mirth/connect/connectors/file/SftpSchemeProperties.class" />
+			<include name="com/mirth/connect/connectors/file/S3SchemeProperties.class" />
 			<include name="com/mirth/connect/connectors/file/FileReceiverProperties.class" />
 			<include name="com/mirth/connect/connectors/file/FileDispatcherProperties.class" />
 			<include name="com/mirth/connect/connectors/file/FileScheme.class" />
@@ -192,6 +200,7 @@
 				<include name="com/mirth/connect/connectors/file/**" />
 				<exclude name="com/mirth/connect/connectors/file/SchemeProperties.class" />
 				<exclude name="com/mirth/connect/connectors/file/SftpSchemeProperties.class" />
+				<exclude name="com/mirth/connect/connectors/file/S3SchemeProperties.class" />
 				<exclude name="com/mirth/connect/connectors/file/FileReceiverProperties.class" />
 				<exclude name="com/mirth/connect/connectors/file/FileDispatcherProperties.class" />
 				<exclude name="com/mirth/connect/connectors/file/FileScheme.class" />
@@ -619,10 +628,12 @@
 			<fileset dir="${lib.extensions}/dashboardstatus" />
 		</copy>
 		<jar destfile="${plugins.dashboardstatus}/dashboardstatus-shared.jar" basedir="${classes}">
+			<include name="com/mirth/connect/plugins/dashboardstatus/ConnectionLogItem.class" />
 			<include name="com/mirth/connect/plugins/dashboardstatus/DashboardConnectorStatusServletInterface.class" />
 		</jar>
 		<jar destfile="${plugins.dashboardstatus}/dashboardstatus-server.jar" basedir="${classes}">
 			<include name="com/mirth/connect/plugins/dashboardstatus/**" />
+			<exclude name="com/mirth/connect/plugins/dashboardstatus/ConnectionLogItem.class" />
 			<exclude name="com/mirth/connect/plugins/dashboardstatus/DashboardConnectorStatusServletInterface.class" />
 		</jar>
 		
@@ -864,10 +875,12 @@
 			<fileset dir="${lib.extensions}/serverlog" />
 		</copy>
 		<jar destfile="${plugins.serverlog}/serverlog-shared.jar" basedir="${classes}">
+			<include name="com/mirth/connect/plugins/serverlog/ServerLogItem.class" />
 			<include name="com/mirth/connect/plugins/serverlog/ServerLogServletInterface.class" />
 		</jar>
 		<jar destfile="${plugins.serverlog}/serverlog-server.jar" basedir="${classes}">
 			<include name="com/mirth/connect/plugins/serverlog/**" />
+			<exclude name="com/mirth/connect/plugins/serverlog/ServerLogItem.class" />
 			<exclude name="com/mirth/connect/plugins/serverlog/ServerLogServletInterface.class" />
 		</jar>
 
@@ -1038,26 +1051,12 @@
 		<echo message="[Thread Count: ${signjar_thread_count}] Signing jars for Java Web Start" />
 		<property file="${keystore_property_file}" />
 		
-		<!-- bouncy castle jars must be signed with SHA1 digestalg -->
 		<for param="jarFile" parallel="true" threadCount="${signjar_thread_count}">
-			<fileset dir="${setup.client.lib}" includes="bcp*.jar" />
-			<sequential>
-				<retry retrycount="5" retrydelay="1000">
-					<signjar jar="@{jarFile}" alias="${key.alias}" keystore="${key.keystore}" storepass="${key.storepass}" keypass="${key.keypass}" storetype="${key.storetype}" tsaurl="http://sha256timestamp.ws.symantec.com/sha256/timestamp" digestalg="SHA1">
-						<!-- http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=7127374 -->
-						<sysproperty key="jsse.enableSNIExtension" value="false" />
-						<sysproperty key="https.protocols" value="TLSv1.2,TLSv1.1" />
-					</signjar>
-				</retry>
-			</sequential>
-		</for>
-		
-		<for param="jarFile" parallel="true" threadCount="${signjar_thread_count}">
-			<fileset dir="${setup.client.lib}" includes="**/*.jar" excludes="bcp*.jar" />
+			<fileset dir="${setup.client.lib}" includes="**/*.jar" />
 			<fileset dir="${setup.extensions}" includes="**/*.jar" />
 			<sequential>
 				<retry retrycount="5" retrydelay="1000">
-					<signjar jar="@{jarFile}" alias="${key.alias}" keystore="${key.keystore}" storepass="${key.storepass}" keypass="${key.keypass}" storetype="${key.storetype}" tsaurl="http://sha256timestamp.ws.symantec.com/sha256/timestamp">
+					<signjar jar="@{jarFile}" alias="${key.alias}" keystore="${key.keystore}" storepass="${key.storepass}" keypass="${key.keypass}" storetype="${key.storetype}" tsaurl="http://sha256timestamp.ws.symantec.com/sha256/timestamp" digestalg="SHA-256">
 						<!-- http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=7127374 -->
 						<sysproperty key="jsse.enableSNIExtension" value="false" />
 						<sysproperty key="https.protocols" value="TLSv1.2,TLSv1.1" />
@@ -1121,6 +1120,11 @@
 		
 		<javadoc sourcepath="${src}:${jdk_src_path}" destdir="${docs.javadocs.userapi}" packagenames="com.mirth.connect.server.userutil,com.mirth.connect.userutil,com.mirth.connect.plugins.httpauth.userutil" link="https://docs.oracle.com/javase/8/docs/api/">
 			<classpath refid="classpath" />
+			<!-- Uncomment the following and add additional dashes in front of the arguments to allow Java 9+
+				<arg line="-html5"/>
+				<arg line="-add-modules java.sql.rowset"/>
+				<arg line="-add-exports java.sql.rowset/com.sun.rowset=ALL-UNNAMED"/>
+			-->
 		</javadoc>
 	</target>
 
@@ -1169,9 +1173,9 @@
 		<delete dir="${test_classes}" />
 		
 		<path id="testclasspath">
-			<path refid="classpath" />
 			<fileset dir="testlib" includes="**/*.jar" />
 			<dirset dir="${classes}"/>
+			<path refid="classpath" />
 		</path>
 	</target>
 	
@@ -1181,7 +1185,19 @@
 		
 		<javac srcdir="${test}" destdir="${test_classes}" debug="on" includeAntRuntime="false">
 			<classpath refid="testclasspath" />
+			<!-- Uncomment the following and add additional dashes in front of the arguments to allow Java 9+
+				<compilerarg value="-add-modules" />
+				<compilerarg value="java.sql.rowset,java.xml.ws" />
+				<compilerarg value="-add-exports" />
+				<compilerarg value="java.sql.rowset/com.sun.rowset=ALL-UNNAMED" />
+			-->
 		</javac>
+		
+		<copy todir="${test_classes}">
+			<fileset dir="${test}">
+				<include name="**/*.xml" />
+			</fileset>
+		</copy>
 		
 		<jar destfile="${test.dist}/${tests.jar}" basedir="${test_classes}">
 			<include name="**/*" />
@@ -1195,6 +1211,15 @@
 		<junit haltonfailure="false" fork="true" forkmode="once">
 			<jvmarg value="-Xms128m" />
 			<jvmarg value="-Xmx1024m" />
+			<!-- Uncomment the following and add additional dashes in front of the arguments to allow Java 9+
+				<jvmarg value="-add-opens=java.base/java.util=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.base/java.lang=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.base/java.lang.reflect=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.base/java.text=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.desktop/java.awt=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.desktop/java.awt.font=ALL-UNNAMED" />
+				<jvmarg value="-add-opens=java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED" />
+			-->
 			<classpath>
 				<path refid="testclasspath" />
 				<dirset dir="${test_classes}"/>

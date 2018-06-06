@@ -58,12 +58,14 @@ import com.mirth.connect.model.ConnectorMetaData;
 import com.mirth.connect.model.ExtensionPermission;
 import com.mirth.connect.model.MetaData;
 import com.mirth.connect.model.PluginClass;
+import com.mirth.connect.model.PluginClassCondition;
 import com.mirth.connect.model.PluginMetaData;
 import com.mirth.connect.model.converters.ObjectXMLSerializer;
 import com.mirth.connect.plugins.AuthorizationPlugin;
 import com.mirth.connect.plugins.ChannelPlugin;
 import com.mirth.connect.plugins.CodeTemplateServerPlugin;
 import com.mirth.connect.plugins.DataTypeServerPlugin;
+import com.mirth.connect.plugins.MultiFactorAuthenticationPlugin;
 import com.mirth.connect.plugins.ResourcePlugin;
 import com.mirth.connect.plugins.ServerPlugin;
 import com.mirth.connect.plugins.ServicePlugin;
@@ -87,6 +89,7 @@ public class DefaultExtensionController extends ExtensionController {
     private Map<String, DataTypeServerPlugin> dataTypePlugins = new LinkedHashMap<String, DataTypeServerPlugin>();
     private Map<String, ResourcePlugin> resourcePlugins = new LinkedHashMap<String, ResourcePlugin>();
     private Map<String, TransmissionModeProvider> transmissionModeProviders = new LinkedHashMap<String, TransmissionModeProvider>();
+    private MultiFactorAuthenticationPlugin multiFactorAuthenticationPlugin = null;
     private AuthorizationPlugin authorizationPlugin = null;
     private ExtensionLoader extensionLoader = ExtensionLoader.getInstance();
 
@@ -202,15 +205,28 @@ public class DefaultExtensionController extends ExtensionController {
                     for (PluginClass pluginClass : pmd.getServerClasses()) {
                         String clazzName = pluginClass.getName();
                         int weight = pluginClass.getWeight();
-                        pluginNameMap.put(clazzName, pmd.getName());
+                        String conditionClass = pluginClass.getConditionClass();
 
-                        List<String> classList = weightedPlugins.get(weight);
-                        if (classList == null) {
-                            classList = new ArrayList<String>();
-                            weightedPlugins.put(weight, classList);
+                        boolean accept = true;
+                        if (StringUtils.isNotBlank(conditionClass)) {
+                            try {
+                                accept = ((PluginClassCondition) Class.forName(conditionClass).newInstance()).accept(pluginClass);
+                            } catch (Exception e) {
+                                logger.warn("Error instantiating plugin condition class \"" + conditionClass + "\".");
+                            }
                         }
 
-                        classList.add(clazzName);
+                        if (accept) {
+                            pluginNameMap.put(clazzName, pmd.getName());
+
+                            List<String> classList = weightedPlugins.get(weight);
+                            if (classList == null) {
+                                classList = new ArrayList<String>();
+                                weightedPlugins.put(weight, classList);
+                            }
+
+                            classList.add(clazzName);
+                        }
                     }
                 }
             } else {
@@ -304,6 +320,18 @@ public class DefaultExtensionController extends ExtensionController {
                         serverPlugins.add(authorizationPlugin);
                         logger.debug("sucessfully loaded server authorization plugin: " + serverPlugin.getPluginPointName());
                     }
+
+                    if (serverPlugin instanceof MultiFactorAuthenticationPlugin) {
+                        MultiFactorAuthenticationPlugin multiFactorAuthenticationPlugin = (MultiFactorAuthenticationPlugin) serverPlugin;
+
+                        if (this.multiFactorAuthenticationPlugin != null) {
+                            throw new Exception("Multiple Multi-Factor Authentication Plugins are not permitted.");
+                        }
+
+                        this.multiFactorAuthenticationPlugin = multiFactorAuthenticationPlugin;
+                        serverPlugins.add(multiFactorAuthenticationPlugin);
+                        logger.debug("sucessfully loaded server multi-factor authentication plugin: " + serverPlugin.getPluginPointName());
+                    }
                 } catch (Exception e) {
                     logger.error("Error instantiating plugin: " + pluginName, e);
                 }
@@ -347,6 +375,11 @@ public class DefaultExtensionController extends ExtensionController {
     @Override
     public AuthorizationPlugin getAuthorizationPlugin() {
         return authorizationPlugin;
+    }
+
+    @Override
+    public MultiFactorAuthenticationPlugin getMultiFactorAuthenticationPlugin() {
+        return multiFactorAuthenticationPlugin;
     }
 
     /* ********************************************************************** */

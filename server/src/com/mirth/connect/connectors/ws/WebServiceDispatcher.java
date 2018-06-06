@@ -139,7 +139,7 @@ public class WebServiceDispatcher extends DestinationConnector {
         this.connectorProperties = (WebServiceDispatcherProperties) getConnectorProperties();
 
         // load the default configuration
-        String configurationClass = configurationController.getProperty(connectorProperties.getProtocol(), "wsConfigurationClass");
+        String configurationClass = getConfigurationClass();
 
         try {
             configuration = (WebServiceConfiguration) Class.forName(configurationClass).newInstance();
@@ -227,6 +227,11 @@ public class WebServiceDispatcher extends DestinationConnector {
         dispatchContainers.clear();
     }
 
+    @Override
+    protected String getConfigurationClass() {
+        return configurationController.getProperty(connectorProperties.getProtocol(), "wsConfigurationClass");
+    }
+
     private String sourceToXmlString(Source source) throws TransformerConfigurationException, TransformerException {
         Transformer transformer = TransformerFactory.newInstance().newTransformer();
         transformer.setOutputProperty(OutputKeys.METHOD, "xml");
@@ -256,7 +261,7 @@ public class WebServiceDispatcher extends DestinationConnector {
             dispatchContainer.setCurrentServiceName(serviceName);
             dispatchContainer.setCurrentPortName(portName);
 
-            URL endpointUrl = getWsdlUrl(dispatchContainer);
+            URL endpointUrl = getWsdlUrl(webServiceDispatcherProperties, dispatchContainer);
             QName serviceQName = QName.valueOf(serviceName);
             QName portQName = QName.valueOf(portName);
 
@@ -293,7 +298,7 @@ public class WebServiceDispatcher extends DestinationConnector {
      * @return
      * @throws Exception
      */
-    private URL getWsdlUrl(DispatchContainer dispatchContainer) throws Exception {
+    protected URL getWsdlUrl(WebServiceDispatcherProperties webServiceDispatcherProperties, DispatchContainer dispatchContainer) throws Exception {
         URI uri = new URI(dispatchContainer.getCurrentWsdlUrl());
 
         // If the URL points to file, just return it
@@ -555,6 +560,8 @@ public class WebServiceDispatcher extends DestinationConnector {
                         result = task.call();
                     }
 
+                    handleSOAPResult(connectorProperties, connectorMessage, result);
+
                     if (webServiceDispatcherProperties.isOneWay()) {
                         responseStatusMessage = "Invoked one way operation successfully.";
                     } else {
@@ -632,7 +639,9 @@ public class WebServiceDispatcher extends DestinationConnector {
         return new Response(responseStatus, responseData, responseStatusMessage, responseError, validateResponse);
     }
 
-    private class DispatchContainer {
+    protected void handleSOAPResult(ConnectorProperties connectorProperties, ConnectorMessage connectorMessage, SOAPMessage result) throws Exception {}
+
+    protected class DispatchContainer {
         /*
          * Dispatch object used for pooling the soap connection, and the current properties used to
          * create the dispatch object

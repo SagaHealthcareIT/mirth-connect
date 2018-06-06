@@ -14,6 +14,8 @@ import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.lang.annotation.Annotation;
 import java.security.KeyStore;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -30,6 +32,7 @@ import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.ibatis.session.SqlSessionManager;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.eclipse.jetty.http.HttpVersion;
@@ -45,6 +48,15 @@ import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.server.handler.HandlerList;
 import org.eclipse.jetty.server.handler.ResourceHandler;
+import org.eclipse.jetty.server.session.DatabaseAdaptor;
+import org.eclipse.jetty.server.session.DefaultSessionCacheFactory;
+import org.eclipse.jetty.server.session.JDBCSessionDataStore.SessionTableSchema;
+import org.eclipse.jetty.server.session.JDBCSessionDataStoreFactory;
+import org.eclipse.jetty.server.session.NullSessionCacheFactory;
+import org.eclipse.jetty.server.session.NullSessionDataStore;
+import org.eclipse.jetty.server.session.SessionCache;
+import org.eclipse.jetty.server.session.SessionDataStore;
+import org.eclipse.jetty.server.session.SessionDataStoreFactory;
 import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.servlet.FilterHolder;
 import org.eclipse.jetty.servlet.ServletContextHandler;
@@ -78,6 +90,7 @@ import com.mirth.connect.server.servlets.SwaggerServlet;
 import com.mirth.connect.server.servlets.WebStartServlet;
 import com.mirth.connect.server.tools.ClassPathResource;
 import com.mirth.connect.server.util.PackagePredicate;
+import com.mirth.connect.server.util.SqlConfig;
 import com.mirth.connect.util.MirthSSLUtil;
 
 public class MirthWebServer extends Server {
@@ -102,16 +115,52 @@ public class MirthWebServer extends Server {
         Logger.getLogger(WadlGeneratorJAXBGrammarGenerator.class).setLevel(Level.OFF);
 
         String baseAPI = "/api";
-        boolean apiAllowHTTP = Boolean.parseBoolean(mirthProperties.getString("server.api.allowhttp", "false"));
 
-        // add HTTP listener
-        connector = new ServerConnector(this);
-        connector.setName(CONNECTOR);
-        connector.setHost(mirthProperties.getString("http.host", "0.0.0.0"));
-        connector.setPort(mirthProperties.getInt("http.port"));
+        boolean usingHttp = mirthProperties.containsKey("http.port") && mirthProperties.getInt("http.port") > 0;
+
+        boolean apiAllowHTTP = usingHttp && Boolean.parseBoolean(mirthProperties.getString("server.api.allowhttp", "false"));
+
+        if (usingHttp) {
+            // add HTTP listener
+            connector = new ServerConnector(this);
+            connector.setName(CONNECTOR);
+            connector.setHost(mirthProperties.getString("http.host", "0.0.0.0"));
+            connector.setPort(mirthProperties.getInt("http.port"));
+        }
 
         // add HTTPS listener
         sslConnector = createSSLConnector(CONNECTOR_SSL, mirthProperties);
+
+        /*
+         * Allows users to decide whether to store session data in the database.
+         */
+        boolean sessionStore = Boolean.parseBoolean(mirthProperties.getString("server.api.sessionstore", "false"));
+
+        if (sessionStore) {
+            // The name of the table to create in the database
+            String sessionStoreTable = mirthProperties.getString("server.api.sessionstoretable", "sessiondata");
+            addBean(createSessionDataStoreFactory(sessionStoreTable));
+        }
+
+        /*
+         * Allows users to decide whether to use an L1 cache of session data at the JVM level. The
+         * null session cache will only be used if session storage is enabled.
+         * 
+         * "none": NullSessionCache
+         * 
+         * "default" / anything else: DefaultSessionCache
+         */
+        String sessionCacheProperty = mirthProperties.getString("server.api.sessioncache", "default");
+
+        if (StringUtils.equalsIgnoreCase(sessionCacheProperty, "none") && sessionStore) {
+            addBean(new NullSessionCacheFactory());
+        } else {
+            // Session caching
+            DefaultSessionCacheFactory sessionCacheFactory = new DefaultSessionCacheFactory();
+            // Evict from the cache after the inactive period has elapsed, default value is 72 hours (3 days)
+            sessionCacheFactory.setEvictionPolicy(configurationController.getMaxInactiveSessionInterval());
+            addBean(sessionCacheFactory);
+        }
 
         handlers = new HandlerList();
         String contextPath = mirthProperties.getString("http.contextpath", "");
@@ -200,6 +249,29 @@ public class MirthWebServer extends Server {
                 logger.debug("webApp File Path: " + file.getAbsolutePath());
 
                 WebAppContext webapp = new WebAppContext();
+
+                // Always use the default session cache for the webadmin context, since it stores the Client in memory
+                SessionHandler sessionHandler = new SessionHandler();
+
+                DefaultSessionCacheFactory sessionCacheFactory = new DefaultSessionCacheFactory();
+                // Evict from the cache after the inactive period has elapsed, default value is 72 hours (3 days)
+                sessionCacheFactory.setEvictionPolicy(configurationController.getMaxInactiveSessionInterval());
+                SessionCache sessionCache = sessionCacheFactory.getSessionCache(sessionHandler);
+
+                // Uses the same method as SessionHandler to determine the data store
+                SessionDataStore sessionDataStore = null;
+                SessionDataStoreFactory sessionDataStoreFactory = getBean(SessionDataStoreFactory.class);
+                if (sessionDataStoreFactory != null) {
+                    sessionDataStore = sessionDataStoreFactory.getSessionDataStore(sessionHandler);
+                } else {
+                    sessionDataStore = new NullSessionDataStore();
+                }
+                sessionCache.setSessionDataStore(sessionDataStore);
+
+                // Set the session cache directly on the handler so it doesn't use the server bean
+                sessionHandler.setSessionCache(sessionCache);
+                webapp.setSessionHandler(sessionHandler);
+
                 webapp.setContextPath(contextPath + "/" + file.getName().substring(0, file.getName().length() - 4));
                 webapp.addFilter(new FilterHolder(new ClickjackingFilter(mirthProperties)), "/*", EnumSet.of(DispatcherType.REQUEST));
 
@@ -244,7 +316,12 @@ public class MirthWebServer extends Server {
         handlers.addHandler(defaultHandler);
 
         setHandler(handlers);
-        setConnectors(new Connector[] { connector, sslConnector });
+
+        if (usingHttp) {
+            setConnectors(new Connector[] { connector, sslConnector });
+        } else {
+            setConnectors(new Connector[] { sslConnector });
+        }
     }
 
     public void startup() throws Exception {
@@ -262,7 +339,7 @@ public class MirthWebServer extends Server {
             }
             start();
         }
-        logger.debug("started jetty web server on ports: " + connector.getPort() + ", " + sslConnector.getPort());
+        logger.debug("started jetty web server on ports: " + (connector != null ? connector.getPort() + ", " : "") + sslConnector.getPort());
     }
 
     private ServerConnector createSSLConnector(String name, PropertiesConfiguration mirthProperties) throws Exception {
@@ -350,7 +427,8 @@ public class MirthWebServer extends Server {
         // Add versioned Swagger bootstrap configuration servlet
         ServletHolder swaggerVersionedServlet = new ServletHolder(new SwaggerServlet(contextPath + baseAPI + apiPath, version, apiVersion, apiProviders.servletInterfacePackages, apiProviders.servletInterfaces, apiAllowHTTP));
         swaggerVersionedServlet.setInitOrder(2);
-        apiServletContextHandler.addServlet(swaggerVersionedServlet, "/swagger*");
+        apiServletContextHandler.addServlet(swaggerVersionedServlet, contextPath + baseAPI + apiPath + "/swagger.json");
+        apiServletContextHandler.addServlet(swaggerVersionedServlet, contextPath + baseAPI + apiPath + "/swagger.yaml");
 
         // Add Swagger UI web page servlet
         handlers.addHandler(getSwaggerContextHandler(contextPath, baseAPI, apiAllowHTTP, version));
@@ -559,5 +637,41 @@ public class MirthWebServer extends Server {
         }
 
         return builder.toString();
+    }
+
+    private SessionDataStoreFactory createSessionDataStoreFactory(String sessionStoreTable) throws SQLException {
+        JDBCSessionDataStoreFactory jdbcSDSFactory = new JDBCSessionDataStoreFactory();
+        SessionTableSchema schema = new SessionTableSchema();
+        schema.setTableName(sessionStoreTable);
+        jdbcSDSFactory.setSessionTableSchema(schema);
+
+        /*
+         * The default Jetty implementation doesn't account for SQL Server's "image" data type so we
+         * add that ourselves.
+         */
+        DatabaseAdaptor dbAdapter = new DatabaseAdaptor() {
+            @Override
+            public String getBlobType() {
+                if (_blobType == null && StringUtils.containsIgnoreCase(getDBName(), "sql server")) {
+                    setBlobType("image");
+                }
+                return super.getBlobType();
+            }
+        };
+
+        SqlSessionManager sqlSessionManager = SqlConfig.getSqlSessionManager();
+        sqlSessionManager.startManagedSession();
+        Connection connection = sqlSessionManager.getConnection();
+        try {
+            dbAdapter.adaptTo(connection.getMetaData());
+            dbAdapter.setDatasource(sqlSessionManager.getConfiguration().getEnvironment().getDataSource());
+        } finally {
+            if (sqlSessionManager.isManagedSessionStarted()) {
+                sqlSessionManager.close();
+            }
+        }
+        jdbcSDSFactory.setDatabaseAdaptor(dbAdapter);
+
+        return jdbcSDSFactory;
     }
 }

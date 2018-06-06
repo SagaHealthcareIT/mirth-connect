@@ -162,7 +162,7 @@ public class DonkeyEngineController implements EngineController {
     }
 
     private Donkey donkey = Donkey.getInstance();
-    private Logger logger = Logger.getLogger(this.getClass());
+    private Logger logger = Logger.getLogger(DonkeyEngineController.class);
     private ConfigurationController configurationController = ControllerFactory.getFactory().createConfigurationController();
     private ScriptController scriptController = ControllerFactory.getFactory().createScriptController();
     private ChannelController channelController = ControllerFactory.getFactory().createChannelController();
@@ -232,8 +232,12 @@ public class DonkeyEngineController implements EngineController {
     }
 
     @Override
-    public void startupDeploy() {
-        deployChannels(channelController.getChannelIds(), ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, null);
+    public void startupDeploy(boolean deployChannels) {
+        if (deployChannels) {
+            deployChannels(channelController.getChannelIds(), ServerEventContext.SYSTEM_USER_EVENT_CONTEXT, null);
+        } else {
+            logger.info("Property \"server.startupdeploy\" is disabled. Skipping initial deployment of channels...");
+        }
     }
 
     @Override
@@ -1326,8 +1330,8 @@ public class DonkeyEngineController implements EngineController {
         Transformer transformer = connectorModel.getTransformer();
         Filter filter = connectorModel.getFilter();
 
-        DataType inboundDataType = DataTypeFactory.getDataType(transformer.getInboundDataType(), transformer.getInboundProperties());
-        DataType outboundDataType = DataTypeFactory.getDataType(transformer.getOutboundDataType(), transformer.getOutboundProperties());
+        DataType inboundDataType = DataTypeFactory.getDataType(transformer.getInboundDataType(), transformer.getInboundProperties(), true);
+        DataType outboundDataType = DataTypeFactory.getDataType(transformer.getOutboundDataType(), transformer.getOutboundProperties(), false);
 
         // Check the conditions for skipping transformation
         // 1. Script is not empty
@@ -1354,15 +1358,19 @@ public class DonkeyEngineController implements EngineController {
             DataTypeServerPlugin outboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getOutboundDataType());
             MessageSerializer serializer = outboundServerPlugin.getSerializer(transformer.getOutboundProperties().getSerializerProperties());
 
-            // Serialize template to XML only if serialization type is XML
-            if (outboundServerPlugin.isBinary() || outboundServerPlugin.getSerializationType() != SerializationType.XML) {
-                template = transformer.getOutboundTemplate();
-            } else {
-                try {
+            // Serialize template based on serialization type
+            SerializationType templateSerializationType = DataTypeFactory.getSerializationType(outboundServerPlugin, transformer.getOutboundProperties(), true);
+
+            try {
+                if (outboundServerPlugin.isBinary() || templateSerializationType == SerializationType.RAW) {
+                    template = transformer.getOutboundTemplate();
+                } else if (templateSerializationType == SerializationType.JSON) {
+                    template = serializer.toJSON(transformer.getOutboundTemplate());
+                } else {
                     template = serializer.toXML(transformer.getOutboundTemplate());
-                } catch (MessageSerializerException e) {
-                    throw new MessageSerializerException("Error serializing transformer outbound template for connector \"" + connectorModel.getName() + "\": " + e.getMessage(), e.getCause(), e.getFormattedError());
                 }
+            } catch (MessageSerializerException e) {
+                throw new MessageSerializerException("Error serializing transformer outbound template for connector \"" + connectorModel.getName() + "\": " + e.getMessage(), e.getCause(), e.getFormattedError());
             }
 
             runFilterTransformer = true;
@@ -1383,8 +1391,8 @@ public class DonkeyEngineController implements EngineController {
         String template = null;
         Transformer transformer = connectorModel.getResponseTransformer();
 
-        DataType inboundDataType = DataTypeFactory.getDataType(transformer.getInboundDataType(), transformer.getInboundProperties());
-        DataType outboundDataType = DataTypeFactory.getDataType(transformer.getOutboundDataType(), transformer.getOutboundProperties());
+        DataType inboundDataType = DataTypeFactory.getDataType(transformer.getInboundDataType(), transformer.getInboundProperties(), true);
+        DataType outboundDataType = DataTypeFactory.getDataType(transformer.getOutboundDataType(), transformer.getOutboundProperties(), false);
 
         // Check the conditions for skipping transformation
         // 1. Script is not empty
@@ -1411,15 +1419,19 @@ public class DonkeyEngineController implements EngineController {
             DataTypeServerPlugin outboundServerPlugin = ExtensionController.getInstance().getDataTypePlugins().get(transformer.getOutboundDataType());
             MessageSerializer serializer = outboundServerPlugin.getSerializer(transformer.getOutboundProperties().getSerializerProperties());
 
-            // Serialize template to XML only if serialization type is XML
-            if (outboundServerPlugin.isBinary() || outboundServerPlugin.getSerializationType() != SerializationType.XML) {
-                template = transformer.getOutboundTemplate();
-            } else {
-                try {
+            // Serialize template based on serialization type
+            SerializationType templateSerializationType = DataTypeFactory.getSerializationType(outboundServerPlugin, transformer.getOutboundProperties(), true);
+
+            try {
+                if (outboundServerPlugin.isBinary() || templateSerializationType == SerializationType.RAW) {
+                    template = transformer.getOutboundTemplate();
+                } else if (templateSerializationType == SerializationType.JSON) {
+                    template = serializer.toJSON(transformer.getOutboundTemplate());
+                } else {
                     template = serializer.toXML(transformer.getOutboundTemplate());
-                } catch (MessageSerializerException e) {
-                    throw new MessageSerializerException("Error serializing response transformer outbound template for connector \"" + connectorModel.getName() + "\": " + e.getMessage(), e.getCause(), e.getFormattedError());
                 }
+            } catch (MessageSerializerException e) {
+                throw new MessageSerializerException("Error serializing response transformer outbound template for connector \"" + connectorModel.getName() + "\": " + e.getMessage(), e.getCause(), e.getFormattedError());
             }
 
             runResponseTransformer = true;
@@ -1493,8 +1505,8 @@ public class DonkeyEngineController implements EngineController {
 
         Transformer transformerModel = connectorModel.getTransformer();
 
-        connector.setInboundDataType(DataTypeFactory.getDataType(transformerModel.getInboundDataType(), transformerModel.getInboundProperties()));
-        connector.setOutboundDataType(DataTypeFactory.getDataType(transformerModel.getOutboundDataType(), transformerModel.getOutboundProperties()));
+        connector.setInboundDataType(DataTypeFactory.getDataType(transformerModel.getInboundDataType(), transformerModel.getInboundProperties(), true));
+        connector.setOutboundDataType(DataTypeFactory.getDataType(transformerModel.getOutboundDataType(), transformerModel.getOutboundProperties(), false));
     }
 
     private MetaDataReplacer createMetaDataReplacer(com.mirth.connect.model.Connector connectorModel) {

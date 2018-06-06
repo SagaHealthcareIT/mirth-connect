@@ -130,7 +130,7 @@ public class Mirth extends Thread {
             }
 
             // check the ports to see if they are already in use
-            boolean httpPort = testPort(mirthProperties.getString("http.host"), mirthProperties.getString("http.port"), "http.port");
+            boolean httpPort = !isUsingHttp() || testPort(mirthProperties.getString("http.host"), mirthProperties.getString("http.port"), "http.port");
             boolean httpsPort = testPort(mirthProperties.getString("https.host"), mirthProperties.getString("https.port"), "https.port");
 
             if (!httpPort || !httpsPort) {
@@ -289,13 +289,9 @@ public class Mirth extends Thread {
                 logger.warn("Unable to initialize global script context factory.", e);
                 contextFactory = contextFactoryController.getGlobalContextFactory();
             }
-            scriptController.compileGlobalScripts(contextFactory);
+            scriptController.compileGlobalScripts(contextFactory, false);
 
-            if (configurationController.isStartupDeploy()) {
-                engineController.startupDeploy();
-            } else {
-                logger.info("Property \"server.startupdeploy\" is disabled. Skipping initial deployment of channels...");
-            }
+            engineController.startupDeploy(configurationController.isStartupDeploy());
         } catch (Exception e) {
             logger.error(e);
         }
@@ -448,11 +444,18 @@ public class Mirth extends Thread {
         logger.info("Running " + System.getProperty("java.vm.name") + " " + System.getProperty("java.version") + " on " + System.getProperty("os.name") + " (" + System.getProperty("os.version") + ", " + System.getProperty("os.arch") + "), " + configurationController.getDatabaseType() + ", with charset " + Charset.defaultCharset() + ".");
 
         if (webServer != null) {
-            String httpUrl = getWebServerUrl("http://", mirthProperties.getString("http.host", "0.0.0.0"), mirthProperties.getInt("http.port"), mirthProperties.getString("http.contextpath"));
+            String httpUrl = null;
+            if (isUsingHttp()) {
+                httpUrl = getWebServerUrl("http://", mirthProperties.getString("http.host", "0.0.0.0"), mirthProperties.getInt("http.port"), mirthProperties.getString("http.contextpath"));
+            }
             String httpsUrl = getWebServerUrl("https://", mirthProperties.getString("https.host", "0.0.0.0"), mirthProperties.getInt("https.port"), mirthProperties.getString("http.contextpath"));
 
-            logger.info("Web server running at " + httpUrl + " and " + httpsUrl);
+            logger.info("Web server running at " + (httpUrl != null ? httpUrl + " and " : "") + httpsUrl);
         }
+    }
+
+    private boolean isUsingHttp() {
+        return mirthProperties.containsKey("http.port") && mirthProperties.getInt("http.port") > 0;
     }
 
     private String getWebServerUrl(String prefix, String host, int port, String contextPath) {

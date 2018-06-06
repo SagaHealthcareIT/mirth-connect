@@ -12,15 +12,19 @@ package com.mirth.connect.client.ui;
 import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.TreeMap;
 
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 
+import com.mirth.connect.client.core.api.InvocationHandlerRecorder;
 import com.mirth.connect.client.ui.panels.connectors.ConnectorSettingsPanel;
 import com.mirth.connect.client.ui.reference.ReferenceListFactory;
 import com.mirth.connect.model.ConnectorMetaData;
@@ -51,6 +55,7 @@ public class LoadedExtensions {
 
     private Map<String, String> extensionVersions = new HashMap<String, String>();
     private List<ClientPlugin> clientPlugins = new ArrayList<ClientPlugin>();
+    private Set<String> userutilPackages = new HashSet<String>();
     private Map<String, SettingsPanelPlugin> settingsPanelPlugins = new LinkedHashMap<String, SettingsPanelPlugin>();
     private Map<String, ChannelPanelPlugin> channelPanelPlugins = new LinkedHashMap<String, ChannelPanelPlugin>();
     private Map<String, DashboardTabPlugin> dashboardTabPlugins = new LinkedHashMap<String, DashboardTabPlugin>();
@@ -73,6 +78,7 @@ public class LoadedExtensions {
     private Map<String, ConnectorSettingsPanel> connectors = new TreeMap<String, ConnectorSettingsPanel>();
     private Map<String, ConnectorSettingsPanel> sourceConnectors = new TreeMap<String, ConnectorSettingsPanel>();
     private Map<String, ConnectorSettingsPanel> destinationConnectors = new TreeMap<String, ConnectorSettingsPanel>();
+    private InvocationHandlerRecorder recorder;
     private static LoadedExtensions instance = null;
     private Logger logger = Logger.getLogger(this.getClass());
 
@@ -130,6 +136,10 @@ public class LoadedExtensions {
                             }
                         }
                     }
+
+                    if (CollectionUtils.isNotEmpty(metaData.getUserutilPackages())) {
+                        userutilPackages.addAll(metaData.getUserutilPackages());
+                    }
                 }
             } catch (Exception e) {
                 PlatformUI.MIRTH_FRAME.alertThrowable(PlatformUI.MIRTH_FRAME, e);
@@ -152,6 +162,10 @@ public class LoadedExtensions {
                                 break;
                             }
                         }
+                    }
+
+                    if (CollectionUtils.isNotEmpty(metaData.getUserutilPackages())) {
+                        userutilPackages.addAll(metaData.getUserutilPackages());
                     }
                 }
             } catch (Exception e) {
@@ -322,10 +336,15 @@ public class LoadedExtensions {
         if (plugin instanceof TaskPlugin) {
             taskPlugins.put(plugin.getPluginPointName(), (TaskPlugin) plugin);
         }
+
+        if (plugin instanceof InvocationHandlerRecorder) {
+            recorder = (InvocationHandlerRecorder) plugin;
+        }
     }
 
     private void clearExtensionMaps() {
         clientPlugins.clear();
+        userutilPackages.clear();
 
         settingsPanelPlugins.clear();
         dashboardTabPlugins.clear();
@@ -353,6 +372,10 @@ public class LoadedExtensions {
 
     public List<ClientPlugin> getClientPlugins() {
         return clientPlugins;
+    }
+
+    public Set<String> getUserutilPackages() {
+        return userutilPackages;
     }
 
     public Map<String, SettingsPanelPlugin> getSettingsPanelPlugins() {
@@ -429,6 +452,10 @@ public class LoadedExtensions {
 
     public Map<String, TaskPlugin> getTaskPlugins() {
         return taskPlugins;
+    }
+
+    public InvocationHandlerRecorder getRecorder() {
+        return recorder;
     }
 
     public Map<String, ConnectorSettingsPanel> getConnectors() {

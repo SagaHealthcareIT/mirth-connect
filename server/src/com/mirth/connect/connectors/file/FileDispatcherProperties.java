@@ -281,6 +281,8 @@ public class FileDispatcherProperties extends ConnectorProperties implements Des
             builder.append("ftp://");
         } else if (scheme == FileScheme.SFTP) {
             builder.append("sftp://");
+        } else if (scheme == FileScheme.S3) {
+            builder.append("s3://");
         } else if (scheme == FileScheme.SMB) {
             builder.append("smb://");
         } else if (scheme == FileScheme.WEBDAV) {
@@ -351,6 +353,9 @@ public class FileDispatcherProperties extends ConnectorProperties implements Des
     @Override
     public void migrate3_5_0(DonkeyElement element) {}
 
+    @Override
+    public void migrate3_6_0(DonkeyElement element) {}
+    
     @Override
     public Map<String, Object> getPurgedProperties() {
         Map<String, Object> purgedProperties = super.getPurgedProperties();

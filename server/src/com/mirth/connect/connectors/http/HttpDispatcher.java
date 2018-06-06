@@ -56,6 +56,7 @@ import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPatch;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
@@ -114,12 +115,12 @@ public class HttpDispatcher extends DestinationConnector {
     private static final Pattern AUTH_HEADER_PATTERN = Pattern.compile("([^\\s=,]+)\\s*=\\s*([^=,;\"\\s]+|\"([^\"]|\\\\[\\s\\S])*(?<!\\\\)\")");
     private static final int MAX_MAP_SIZE = 100;
 
-    private Logger logger = Logger.getLogger(this.getClass());
-    private HttpDispatcherProperties connectorProperties;
+    protected Logger logger = Logger.getLogger(this.getClass());
+    protected HttpDispatcherProperties connectorProperties;
 
-    private ConfigurationController configurationController = ControllerFactory.getFactory().createConfigurationController();
-    private EventController eventController = ControllerFactory.getFactory().createEventController();
-    private TemplateValueReplacer replacer = new TemplateValueReplacer();
+    protected ConfigurationController configurationController = ControllerFactory.getFactory().createConfigurationController();
+    protected EventController eventController = ControllerFactory.getFactory().createEventController();
+    protected TemplateValueReplacer replacer = new TemplateValueReplacer();
 
     private Map<Long, CloseableHttpClient> clients = new ConcurrentHashMap<Long, CloseableHttpClient>();
     private HttpConfiguration configuration;
@@ -132,7 +133,7 @@ public class HttpDispatcher extends DestinationConnector {
         this.connectorProperties = (HttpDispatcherProperties) getConnectorProperties();
 
         // load the default configuration
-        String configurationClass = configurationController.getProperty(connectorProperties.getProtocol(), "httpConfigurationClass");
+        String configurationClass = getConfigurationClass();
 
         try {
             configuration = (HttpConfiguration) Class.forName(configurationClass).newInstance();
@@ -190,15 +191,8 @@ public class HttpDispatcher extends DestinationConnector {
         httpDispatcherProperties.setProxyAddress(replacer.replaceValues(httpDispatcherProperties.getProxyAddress(), connectorMessage));
         httpDispatcherProperties.setProxyPort(replacer.replaceValues(httpDispatcherProperties.getProxyPort(), connectorMessage));
         httpDispatcherProperties.setResponseBinaryMimeTypes(replacer.replaceValues(httpDispatcherProperties.getResponseBinaryMimeTypes(), connectorMessage));
-
-        for (List<String> list : httpDispatcherProperties.getHeaders().values()) {
-            replacer.replaceValuesInList(list, connectorMessage);
-        }
-
-        for (List<String> list : httpDispatcherProperties.getParameters().values()) {
-            replacer.replaceValuesInList(list, connectorMessage);
-        }
-
+        httpDispatcherProperties.setHeaders(replacer.replaceKeysAndValuesInMap(httpDispatcherProperties.getHeaders(), connectorMessage));
+        httpDispatcherProperties.setParameters(replacer.replaceKeysAndValuesInMap(httpDispatcherProperties.getParameters(), connectorMessage));
         httpDispatcherProperties.setUsername(replacer.replaceValues(httpDispatcherProperties.getUsername(), connectorMessage));
         httpDispatcherProperties.setPassword(replacer.replaceValues(httpDispatcherProperties.getPassword(), connectorMessage));
         httpDispatcherProperties.setContent(replacer.replaceValues(httpDispatcherProperties.getContent(), connectorMessage));
@@ -424,6 +418,11 @@ public class HttpDispatcher extends DestinationConnector {
         return new Response(responseStatus, responseData, responseStatusMessage, responseError, validateResponse);
     }
 
+    @Override
+    protected String getConfigurationClass() {
+        return configurationController.getProperty(connectorProperties.getProtocol(), "httpConfigurationClass");
+    }
+
     public RegistryBuilder<ConnectionSocketFactory> getSocketFactoryRegistry() {
         return socketFactoryRegistry;
     }
@@ -509,6 +508,20 @@ public class HttpDispatcher extends DestinationConnector {
         } else if ("DELETE".equalsIgnoreCase(method)) {
             setQueryString(uriBuilder, queryParameters);
             httpMethod = new HttpDelete(uriBuilder.build());
+        } else if ("PATCH".equalsIgnoreCase(method)) {
+            if (StringUtils.startsWithIgnoreCase(contentType.getMimeType(), ContentType.APPLICATION_FORM_URLENCODED.getMimeType())) {
+                httpMethod = new HttpPatch(uriBuilder.build());
+                httpEntity = new UrlEncodedFormEntity(queryParameters, contentType.getCharset());
+            } else {
+                setQueryString(uriBuilder, queryParameters);
+                httpMethod = new HttpPatch(uriBuilder.build());
+
+                if (content instanceof String) {
+                    httpEntity = new StringEntity((String) content, contentType);
+                } else {
+                    httpEntity = new ByteArrayEntity((byte[]) content);
+                }
+            }
         }
 
         if (httpMethod instanceof HttpEntityEnclosingRequestBase) {
@@ -535,7 +548,7 @@ public class HttpDispatcher extends DestinationConnector {
         }
 
         // Only set the Content-Type for entity-enclosing methods, but not if multipart is used
-        if (("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)) && !isMultipart) {
+        if (("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) && !isMultipart) {
             httpMethod.setHeader(HTTP.CONTENT_TYPE, contentType.toString());
         }
 

@@ -29,6 +29,8 @@ import org.apache.log4j.Logger;
 import com.mirth.connect.connectors.file.filesystems.FileSystemConnection;
 import com.mirth.connect.connectors.file.filesystems.FileSystemConnectionFactory;
 import com.mirth.connect.donkey.model.channel.ConnectorProperties;
+import com.mirth.connect.donkey.server.channel.Connector;
+import com.mirth.connect.donkey.server.channel.DestinationConnector;
 
 public class FileConnector {
     private Logger logger = Logger.getLogger(this.getClass());
@@ -43,8 +45,9 @@ public class FileConnector {
     private boolean passive;
     private boolean secure;
     private boolean validateConnection;
+    private int maxTotalConnections = GenericObjectPoolConfig.DEFAULT_MAX_TOTAL;
 
-    public FileConnector(String channelId, ConnectorProperties connectorProperties) {
+    public FileConnector(String channelId, ConnectorProperties connectorProperties, Connector connector) {
         this.channelId = channelId;
 
         if (connectorProperties instanceof FileReceiverProperties) {
@@ -61,6 +64,11 @@ public class FileConnector {
             this.passive = fileDispatcherProperties.isPassive();
             this.secure = fileDispatcherProperties.isSecure();
             this.validateConnection = fileDispatcherProperties.isValidateConnection();
+        }
+
+        if (connector instanceof DestinationConnector) {
+            // Set the max total to at least the default value
+            maxTotalConnections = Math.max(GenericObjectPoolConfig.DEFAULT_MAX_TOTAL, ((DestinationConnector) connector).getPotentialThreadCount());
         }
     }
 
@@ -194,17 +202,15 @@ public class FileConnector {
      * @throws Exception
      */
     protected void releaseConnection(FileSystemConnection connection, FileSystemConnectionOptions fileSystemOptions) throws Exception {
-//        if (isCreateDispatcherPerRequest()) {
-//            destroyConnection(uri, connection, message);
-//        } else {
         synchronized (connections) {
             connections.remove(connection);
         }
-        if (connection != null && connection.isConnected()) {
+
+        // MIRTH-4266: Return the connection to the pool even if it's not connected.
+        if (connection != null) {
             ObjectPool<FileSystemConnection> pool = getConnectionPool(fileSystemOptions);
             pool.returnObject(connection);
         }
-//        }
     }
 
     /**
@@ -253,6 +259,7 @@ public class FileConnector {
 
         if (pool == null) {
             GenericObjectPoolConfig config = new GenericObjectPoolConfig();
+            config.setMaxTotal(maxTotalConnections);
             if (isValidateConnection()) {
                 config.setTestOnBorrow(true);
                 config.setTestOnReturn(true);
@@ -283,16 +290,16 @@ public class FileConnector {
         this.outputStream = outputStream;
     }
 
-    protected URI getEndpointURI(String host) throws URISyntaxException {
-        return getEndpointURI(host, scheme, secure);
-    }
-
-    public static URI getEndpointURI(String host, FileScheme scheme, boolean isSecure) throws URISyntaxException {
+    public URI getEndpointURI(String host, FileScheme scheme, SchemeProperties schemeProperties, boolean isSecure) throws URISyntaxException {
         StringBuilder sspBuilder = new StringBuilder();
 
         sspBuilder.append("//");
         if (scheme == FileScheme.FILE && StringUtils.isNotBlank(host) && host.length() >= 3 && host.substring(1, 3).equals(":/")) {
             sspBuilder.append("/");
+        }
+
+        if (scheme == FileScheme.S3) {
+            sspBuilder.append(((S3SchemeProperties) schemeProperties).getRegion()).append('/');
         }
 
         sspBuilder.append(host);
@@ -304,6 +311,8 @@ public class FileConnector {
             } else {
                 schemeName = "http";
             }
+        } else if (scheme == FileScheme.S3) {
+            schemeName = "s3";
         } else {
             schemeName = scheme.getDisplayName();
         }

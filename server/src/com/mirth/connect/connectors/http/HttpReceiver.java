@@ -61,10 +61,10 @@ import org.apache.http.protocol.HTTP;
 import org.apache.log4j.Logger;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpURI;
+import org.eclipse.jetty.security.AbstractLoginService.UserPrincipal;
 import org.eclipse.jetty.security.ConstraintMapping;
 import org.eclipse.jetty.security.ConstraintSecurityHandler;
 import org.eclipse.jetty.security.DefaultUserIdentity;
-import org.eclipse.jetty.security.MappedLoginService.KnownUser;
 import org.eclipse.jetty.security.ServerAuthException;
 import org.eclipse.jetty.security.UserAuthentication;
 import org.eclipse.jetty.server.Authentication;
@@ -87,6 +87,7 @@ import com.mirth.connect.donkey.model.message.ConnectorMessage;
 import com.mirth.connect.donkey.model.message.RawMessage;
 import com.mirth.connect.donkey.model.message.Response;
 import com.mirth.connect.donkey.model.message.Status;
+import com.mirth.connect.donkey.model.message.attachment.Attachment;
 import com.mirth.connect.donkey.server.ConnectorTaskException;
 import com.mirth.connect.donkey.server.channel.ChannelException;
 import com.mirth.connect.donkey.server.channel.DispatchResult;
@@ -141,7 +142,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         }
 
         // load the default configuration
-        String configurationClass = configurationController.getProperty(connectorProperties.getProtocol(), "httpConfigurationClass");
+        String configurationClass = getConfigurationClass();
 
         try {
             configuration = (HttpConfiguration) Class.forName(configurationClass).newInstance();
@@ -325,6 +326,11 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         onStop();
     }
 
+    @Override
+    protected String getConfigurationClass() {
+        return configurationController.getProperty(connectorProperties.getProtocol(), "httpConfigurationClass");
+    }
+
     private class RequestHandler extends AbstractHandler {
         @Override
         public void handle(String target, Request baseRequest, HttpServletRequest servletRequest, HttpServletResponse servletResponse) throws IOException, ServletException {
@@ -336,12 +342,13 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
             try {
                 Thread.currentThread().setName("HTTP Receiver Thread on " + getChannel().getName() + " (" + getChannelId() + ") < " + originalThreadName);
                 Map<String, Object> sourceMap = new HashMap<String, Object>();
+                List<Attachment> attachments = new ArrayList<Attachment>();
                 Object messageContent = null;
 
                 try {
-                    messageContent = getMessage(baseRequest, sourceMap);
+                    messageContent = getMessage(baseRequest, sourceMap, attachments);
                 } catch (Throwable t) {
-                    sendErrorResponse(servletResponse, dispatchResult, t);
+                    sendErrorResponse(baseRequest, servletResponse, dispatchResult, t);
                 }
 
                 if (messageContent != null) {
@@ -352,7 +359,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
                             eventController.dispatchEvent(new ErrorEvent(getChannelId(), getMetaDataId(), null, ErrorEventType.SOURCE_CONNECTOR, getSourceName(), connectorProperties.getName(), null, e));
                         } else {
                             try {
-                                BatchRawMessage batchRawMessage = new BatchRawMessage(new BatchMessageReader((String) messageContent), sourceMap);
+                                BatchRawMessage batchRawMessage = new BatchRawMessage(new BatchMessageReader((String) messageContent), sourceMap, attachments);
                                 ResponseHandler responseHandler = new SimpleResponseHandler();
 
                                 dispatchBatchMessage(batchRawMessage, responseHandler);
@@ -360,23 +367,23 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
                                 dispatchResult = responseHandler.getResultForResponse();
                                 sendResponse(baseRequest, servletResponse, dispatchResult);
                             } catch (Throwable t) {
-                                sendErrorResponse(servletResponse, dispatchResult, t);
+                                sendErrorResponse(baseRequest, servletResponse, dispatchResult, t);
                             }
                         }
                     } else {
                         try {
                             RawMessage rawMessage = null;
                             if (messageContent instanceof byte[]) {
-                                rawMessage = new RawMessage((byte[]) messageContent, null, sourceMap);
+                                rawMessage = new RawMessage((byte[]) messageContent, null, sourceMap, attachments);
                             } else {
-                                rawMessage = new RawMessage((String) messageContent, null, sourceMap);
+                                rawMessage = new RawMessage((String) messageContent, null, sourceMap, attachments);
                             }
 
                             dispatchResult = dispatchRawMessage(rawMessage);
 
                             sendResponse(baseRequest, servletResponse, dispatchResult);
                         } catch (Throwable t) {
-                            sendErrorResponse(servletResponse, dispatchResult, t);
+                            sendErrorResponse(baseRequest, servletResponse, dispatchResult, t);
                         } finally {
                             finishDispatch(dispatchResult);
                         }
@@ -390,7 +397,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         }
     }
 
-    private void sendResponse(Request baseRequest, HttpServletResponse servletResponse, DispatchResult dispatchResult) throws Exception {
+    protected void sendResponse(Request baseRequest, HttpServletResponse servletResponse, DispatchResult dispatchResult) throws Exception {
         ContentType contentType = ContentType.parse(replaceValues(connectorProperties.getResponseContentType(), dispatchResult));
         if (!connectorProperties.isResponseDataTypeBinary() && contentType.getCharset() == null) {
             /*
@@ -400,12 +407,32 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
              */
             contentType = ContentType.parse(contentType.toString() + "; charset=" + CharsetUtils.getEncoding(connectorProperties.getCharset()));
         }
+
+        // Replace response headers
+        Map<String, List<String>> responseHeaders = new HashMap<String, List<String>>();
+        for (Entry<String, List<String>> entry : connectorProperties.getResponseHeaders().entrySet()) {
+            String replacedKey = replaceValues(entry.getKey(), dispatchResult);
+
+            for (String headerValue : entry.getValue()) {
+                List<String> list = responseHeaders.get(replacedKey);
+                if (list == null) {
+                    list = new ArrayList<String>();
+                    responseHeaders.put(replacedKey, list);
+                }
+                list.add(replaceValues(headerValue, dispatchResult));
+            }
+        }
+
+        sendResponse(baseRequest, servletResponse, dispatchResult, contentType, responseHeaders, null);
+    }
+
+    protected void sendResponse(Request baseRequest, HttpServletResponse servletResponse, DispatchResult dispatchResult, ContentType contentType, Map<String, List<String>> responseHeaders, byte[] responseBytes) throws Exception {
         servletResponse.setContentType(contentType.toString());
 
         // set the response headers
-        for (Entry<String, List<String>> entry : connectorProperties.getResponseHeaders().entrySet()) {
+        for (Entry<String, List<String>> entry : responseHeaders.entrySet()) {
             for (String headerValue : entry.getValue()) {
-                servletResponse.addHeader(entry.getKey(), replaceValues(headerValue, dispatchResult));
+                servletResponse.addHeader(entry.getKey(), headerValue);
             }
         }
 
@@ -436,13 +463,14 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
 
             String message = selectedResponse.getMessage();
 
-            if (message != null) {
+            if (message != null || responseBytes != null) {
                 OutputStream responseOutputStream = servletResponse.getOutputStream();
-                byte[] responseBytes;
-                if (connectorProperties.isResponseDataTypeBinary()) {
-                    responseBytes = Base64Util.decodeBase64(message.getBytes("US-ASCII"));
-                } else {
-                    responseBytes = message.getBytes(CharsetUtils.getEncoding(connectorProperties.getCharset()));
+                if (responseBytes == null) {
+                    if (connectorProperties.isResponseDataTypeBinary()) {
+                        responseBytes = Base64Util.decodeBase64(message.getBytes("US-ASCII"));
+                    } else {
+                        responseBytes = message.getBytes(CharsetUtils.getEncoding(connectorProperties.getCharset()));
+                    }
                 }
 
                 // If the client accepts GZIP compression, compress the content
@@ -479,10 +507,10 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         }
     }
 
-    private void sendErrorResponse(HttpServletResponse servletResponse, DispatchResult dispatchResult, Throwable t) throws IOException {
+    protected void sendErrorResponse(Request baseRequest, HttpServletResponse servletResponse, DispatchResult dispatchResult, Throwable t) throws IOException {
         String responseError = ExceptionUtils.getStackTrace(t);
         logger.error("Error receiving message (" + connectorProperties.getName() + " \"Source\" on channel " + getChannelId() + ").", t);
-        eventController.dispatchEvent(new ErrorEvent(getChannelId(), getMetaDataId(), dispatchResult.getMessageId(), ErrorEventType.SOURCE_CONNECTOR, getSourceName(), connectorProperties.getName(), "Error receiving message", t));
+        eventController.dispatchEvent(new ErrorEvent(getChannelId(), getMetaDataId(), dispatchResult == null ? null : dispatchResult.getMessageId(), ErrorEventType.SOURCE_CONNECTOR, getSourceName(), connectorProperties.getName(), "Error receiving message", t));
 
         if (dispatchResult != null) {
             // TODO decide if we still want to send back the exception content or something else?
@@ -499,7 +527,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         servletResponse.getOutputStream().write(responseError.getBytes());
     }
 
-    private Object getMessage(Request request, Map<String, Object> sourceMap) throws IOException, ChannelException, MessagingException, DonkeyElementException, ParserConfigurationException {
+    protected Object getMessage(Request request, Map<String, Object> sourceMap, List<Attachment> attachments) throws IOException, ChannelException, MessagingException, DonkeyElementException, ParserConfigurationException {
         HttpRequestMessage requestMessage = createRequestMessage(request, false);
 
         /*
@@ -523,7 +551,13 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         return rawMessageContent;
     }
 
-    private HttpRequestMessage createRequestMessage(Request request, boolean ignorePayload) throws IOException, MessagingException {
+    protected HttpRequestMessage createRequestMessage(Request request, boolean ignorePayload) throws IOException, MessagingException {
+        // Only parse multipart if XML Body is selected and Parse Multipart is enabled
+        boolean parseMultipart = connectorProperties.isXmlBody() && connectorProperties.isParseMultipart() && ServletFileUpload.isMultipartContent(request);
+        return createRequestMessage(request, ignorePayload, parseMultipart);
+    }
+
+    protected HttpRequestMessage createRequestMessage(Request request, boolean ignorePayload, boolean parseMultipart) throws IOException, MessagingException {
         HttpRequestMessage requestMessage = new HttpRequestMessage();
         requestMessage.setMethod(request.getMethod());
         requestMessage.setHeaders(HttpMessageConverter.convertFieldEnumerationToMap(request));
@@ -569,9 +603,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
              * this could end up being a string encoded with the request charset, a byte array
              * representing the raw request payload, or a MimeMultipart object.
              */
-
-            // Only parse multipart if XML Body is selected and Parse Multipart is enabled
-            if (connectorProperties.isXmlBody() && connectorProperties.isParseMultipart() && ServletFileUpload.isMultipartContent(request)) {
+            if (parseMultipart) {
                 requestMessage.setContent(new MimeMultipart(new ByteArrayDataSource(requestInputStream, contentType.toString())));
             } else if (isBinaryContentType(contentType)) {
                 requestMessage.setContent(IOUtils.toByteArray(requestInputStream));
@@ -583,7 +615,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         return requestMessage;
     }
 
-    private void populateSourceMap(Request request, HttpRequestMessage requestMessage, Map<String, Object> sourceMap) {
+    protected void populateSourceMap(Request request, HttpRequestMessage requestMessage, Map<String, Object> sourceMap) {
         sourceMap.put("remoteAddress", requestMessage.getRemoteAddress());
         sourceMap.put("remotePort", request.getRemotePort());
         sourceMap.put("localAddress", StringUtils.trimToEmpty(request.getLocalAddr()));
@@ -737,7 +769,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         }
     }
 
-    private String replaceValues(String template, DispatchResult dispatchResult) {
+    protected String replaceValues(String template, DispatchResult dispatchResult) {
         ConnectorMessage mergedConnectorMessage = null;
 
         if (dispatchResult != null && dispatchResult.getProcessedMessage() != null) {
@@ -768,7 +800,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         return timeout;
     }
 
-    private Map<String, List<String>> extractParameters(Request request) {
+    protected Map<String, List<String>> extractParameters(Request request) {
         Map<String, List<String>> parameterMap = new HashMap<String, List<String>>();
 
         for (Entry<String, String[]> entry : request.getParameterMap().entrySet()) {
@@ -785,7 +817,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         return parameterMap;
     }
 
-    private boolean parametersEqual(Map<String, List<String>> params1, Map<String, List<String>> params2) {
+    protected boolean parametersEqual(Map<String, List<String>> params1, Map<String, List<String>> params2) {
         if (!params1.keySet().equals(params2.keySet())) {
             return false;
         }
@@ -799,7 +831,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
         return true;
     }
 
-    private String getRequestURL(Request request) {
+    protected String getRequestURL(Request request) {
         String requestURL = request.getRequestURL().toString();
 
         try {
@@ -917,7 +949,7 @@ public class HttpReceiver extends SourceConnector implements BinaryContentTypeRe
                             response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
                             return org.eclipse.jetty.server.Authentication.SEND_CONTINUE;
                         case SUCCESS:
-                            Principal userPrincipal = new KnownUser(StringUtils.trimToEmpty(result.getUsername()), null);
+                            Principal userPrincipal = new UserPrincipal(StringUtils.trimToEmpty(result.getUsername()), null);
                             Subject subject = new Subject();
                             subject.getPrincipals().add(userPrincipal);
                             return new UserAuthentication(getAuthMethod(), new DefaultUserIdentity(subject, userPrincipal, new String[] {

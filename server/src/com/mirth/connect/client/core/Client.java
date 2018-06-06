@@ -56,6 +56,7 @@ import com.mirth.commons.encryption.Encryptor;
 import com.mirth.commons.encryption.KeyEncryptor;
 import com.mirth.connect.client.core.Operation.ExecuteType;
 import com.mirth.connect.client.core.api.BaseServletInterface;
+import com.mirth.connect.client.core.api.InvocationHandlerRecorder;
 import com.mirth.connect.client.core.api.providers.MetaDataSearchParamConverterProvider.MetaDataSearch;
 import com.mirth.connect.client.core.api.servlets.AlertServletInterface;
 import com.mirth.connect.client.core.api.servlets.ChannelGroupServletInterface;
@@ -131,6 +132,7 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
     private javax.ws.rs.client.Client client;
     private URI api;
     private AtomicBoolean closed = new AtomicBoolean(false);
+    private InvocationHandlerRecorder recorder;
 
     /**
      * Instantiates a new Mirth client with a connection to the specified server.
@@ -229,8 +231,12 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
         return getServlet(servletInterface, null);
     }
 
+    public <T> T getServlet(Class<T> servletInterface, ExecuteType executeType) {
+        return getServlet(servletInterface, executeType, null);
+    }
+
     @SuppressWarnings("unchecked")
-    public <T> T getServlet(final Class<T> servletInterface, final ExecuteType executeType) {
+    public <T> T getServlet(final Class<T> servletInterface, final ExecuteType executeType, final Map<String, List<String>> customHeaders) {
         return (T) Proxy.newProxyInstance(AccessController.doPrivileged(ReflectionHelper.getClassLoaderPA(servletInterface)), new Class[] {
                 servletInterface }, new InvocationHandler() {
                     @Override
@@ -247,12 +253,20 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
                                 target.property(ServerConnection.EXECUTE_TYPE_PROPERTY, executeType);
                             }
 
+                            if (customHeaders != null) {
+                                target.property(ServerConnection.CUSTOM_HEADERS_PROPERTY, customHeaders);
+                            }
+
                             if (args == null && method.getName().equals("toString")) {
                                 return target.toString();
                             }
 
                             T resource = WebResourceFactory.newResource(servletInterface, target);
                             Object result = method.invoke(resource, args);
+
+                            if (recorder != null) {
+                                recorder.recordInvocation(method, args, result, null);
+                            }
 
                             // Make sure to return the right type
                             if (result == null && method.getReturnType().isPrimitive()) {
@@ -267,11 +281,16 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
                             if (cause instanceof ProcessingException && cause.getCause() != null) {
                                 cause = cause.getCause();
                             }
-                            if (cause instanceof ClientException) {
-                                throw (ClientException) cause;
-                            } else {
-                                throw new ClientException(cause);
+
+                            if (!(cause instanceof ClientException)) {
+                                cause = new ClientException(cause);
                             }
+
+                            if (recorder != null) {
+                                recorder.recordInvocation(method, args, null, cause);
+                            }
+
+                            throw (ClientException) cause;
                         }
                     }
                 });
@@ -279,6 +298,10 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
 
     public ServerConnection getServerConnection() {
         return serverConnection;
+    }
+
+    public void setRecorder(InvocationHandlerRecorder recorder) {
+        this.recorder = recorder;
     }
 
     public void close() {
@@ -560,7 +583,7 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * @see ConfigurationServletInterface#getServerConfiguration
      */
     public ServerConfiguration getServerConfiguration() throws ClientException {
-        return getServlet(ConfigurationServletInterface.class).getServerConfiguration(null, false);
+        return getServlet(ConfigurationServletInterface.class).getServerConfiguration(null, false, false);
     }
 
     /**
@@ -570,8 +593,8 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * @see ConfigurationServletInterface#getServerConfiguration
      */
     @Override
-    public ServerConfiguration getServerConfiguration(DeployedState initialState, boolean pollingOnly) throws ClientException {
-        return getServlet(ConfigurationServletInterface.class).getServerConfiguration(initialState, pollingOnly);
+    public ServerConfiguration getServerConfiguration(DeployedState initialState, boolean pollingOnly, boolean disableAlerts) throws ClientException {
+        return getServlet(ConfigurationServletInterface.class).getServerConfiguration(initialState, pollingOnly, disableAlerts);
     }
 
     /**
@@ -580,8 +603,8 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * @see ConfigurationServletInterface#setServerConfiguration
      */
     @Override
-    public synchronized void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy) throws ClientException {
-        getServlet(ConfigurationServletInterface.class).setServerConfiguration(serverConfiguration, deploy);
+    public synchronized void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy, boolean overwriteConfigMap) throws ClientException {
+        getServlet(ConfigurationServletInterface.class).setServerConfiguration(serverConfiguration, deploy, overwriteConfigMap);
     }
 
     /**
@@ -1629,8 +1652,8 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * 
      * @see MessageServletInterface#processMessage
      */
-    public void processMessage(String channelId, String rawMessage) throws ClientException {
-        processMessage(channelId, rawMessage, null, null, false, false, null);
+    public Long processMessage(String channelId, String rawMessage) throws ClientException {
+        return processMessage(channelId, rawMessage, null, null, false, false, null);
     }
 
     /**
@@ -1639,8 +1662,8 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * @see MessageServletInterface#processMessage
      */
     @Override
-    public void processMessage(String channelId, String rawData, Set<Integer> destinationMetaDataIds, Set<String> sourceMapEntries, boolean overwrite, boolean imported, Long originalMessageId) throws ClientException {
-        getServlet(MessageServletInterface.class).processMessage(channelId, rawData, destinationMetaDataIds, sourceMapEntries, overwrite, imported, originalMessageId);
+    public Long processMessage(String channelId, String rawData, Set<Integer> destinationMetaDataIds, Set<String> sourceMapEntries, boolean overwrite, boolean imported, Long originalMessageId) throws ClientException {
+        return getServlet(MessageServletInterface.class).processMessage(channelId, rawData, destinationMetaDataIds, sourceMapEntries, overwrite, imported, originalMessageId);
     }
 
     /**
@@ -1649,8 +1672,8 @@ public class Client implements UserServletInterface, ConfigurationServletInterfa
      * @see MessageServletInterface#processMessage
      */
     @Override
-    public void processMessage(String channelId, RawMessage rawMessage) throws ClientException {
-        getServlet(MessageServletInterface.class).processMessage(channelId, rawMessage);
+    public Long processMessage(String channelId, RawMessage rawMessage) throws ClientException {
+        return getServlet(MessageServletInterface.class).processMessage(channelId, rawMessage);
     }
 
     /**

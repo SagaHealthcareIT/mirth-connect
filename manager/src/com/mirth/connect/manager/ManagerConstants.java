@@ -12,8 +12,8 @@ package com.mirth.connect.manager;
 public class ManagerConstants {
 
     // Server ports
-    public static final String SERVER_WEBSTART_PORT = "http.port";
-    public static final String SERVER_ADMINISTRATOR_PORT = "https.port";
+    public static final String SERVER_HTTP_PORT = "http.port";
+    public static final String SERVER_HTTPS_PORT = "https.port";
 
     // Configurable directories
     public static final String DIR_APPDATA = "dir.appdata";
@@ -46,7 +46,8 @@ public class ManagerConstants {
     public static final String PATH_SERVICE_VMOPTIONS = "mcservice.vmoptions";
 
     // Webstart commands
-    public static final String CMD_WEBSTART_PREFIX = "javaws http://localhost:";
+    public static final String CMD_WEBSTART_PREFIX1 = "javaws ";
+    public static final String CMD_WEBSTART_PREFIX2 = "://localhost:";
     public static final String CMD_WEBSTART_SUFFIX = "/webstart.jnlp";
     public static final String CMD_TEST_JETTY_PREFIX = "https://localhost:";
 

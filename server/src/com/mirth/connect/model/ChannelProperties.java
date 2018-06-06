@@ -47,6 +47,7 @@ public class ChannelProperties implements Serializable, Migratable, Purgable {
         messageStorageMode = MessageStorageMode.DEVELOPMENT;
         encryptData = false;
         initialState = DeployedState.STARTED;
+        storeAttachments = true;
         metaDataColumns = new ArrayList<MetaDataColumn>();
         attachmentProperties = AttachmentHandlerType.NONE.getDefaultProperties();
         resourceIds = new LinkedHashMap<String, String>();
@@ -189,6 +190,9 @@ public class ChannelProperties implements Serializable, Migratable, Purgable {
     @Override
     public void migrate3_5_0(DonkeyElement element) {}
 
+    @Override
+    public void migrate3_6_0(DonkeyElement element) {}
+    
     @Override
     public Map<String, Object> getPurgedProperties() {
         Map<String, Object> purgedProperties = new HashMap<String, Object>();

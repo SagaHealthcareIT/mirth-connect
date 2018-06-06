@@ -19,8 +19,6 @@ import java.util.Set;
 import com.mirth.commons.encryption.Digester;
 import com.mirth.commons.encryption.Encryptor;
 import com.mirth.connect.client.core.ControllerException;
-import com.mirth.connect.donkey.server.StartException;
-import com.mirth.connect.donkey.server.StopException;
 import com.mirth.connect.model.ChannelDependency;
 import com.mirth.connect.model.ChannelMetadata;
 import com.mirth.connect.model.ChannelTag;
@@ -218,6 +216,11 @@ public abstract class ConfigurationController extends Controller {
      */
     public abstract String getBuildDate();
 
+    /**
+     * The maximum amount of time that a session can be idle before it is invalidated.
+     */
+    public abstract int getMaxInactiveSessionInterval();
+
     public abstract String[] getHttpsClientProtocols();
 
     public abstract String[] getHttpsServerProtocols();
@@ -253,7 +256,7 @@ public abstract class ConfigurationController extends Controller {
      *             if the server configuration could not be restored
      * @throws InterruptedException
      */
-    public abstract void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy) throws StartException, StopException, ControllerException, InterruptedException;
+    public abstract void setServerConfiguration(ServerConfiguration serverConfiguration, boolean deploy, boolean overwriteConfigMap) throws ControllerException;
 
     /**
      * Returns the password requirements specified in the mirth.properties file (ex. min length).

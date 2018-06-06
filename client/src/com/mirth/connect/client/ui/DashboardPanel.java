@@ -52,6 +52,8 @@ import javax.swing.event.ListSelectionListener;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
+import net.miginfocom.swing.MigLayout;
+
 import org.jdesktop.swingx.decorator.ColorHighlighter;
 import org.jdesktop.swingx.decorator.ComponentAdapter;
 import org.jdesktop.swingx.decorator.HighlightPredicate;
@@ -81,8 +83,6 @@ import com.mirth.connect.plugins.DashboardColumnPlugin;
 import com.mirth.connect.plugins.DashboardPanelPlugin;
 import com.mirth.connect.plugins.DashboardTabPlugin;
 import com.mirth.connect.plugins.DashboardTablePlugin;
-
-import net.miginfocom.swing.MigLayout;
 
 public class DashboardPanel extends JPanel {
 
@@ -215,7 +215,7 @@ public class DashboardPanel extends JPanel {
         repaint();
     }
 
-    private void loadPanelPlugin(final DashboardPanelPlugin plugin) {
+    public void loadPanelPlugin(final DashboardPanelPlugin plugin) {
         final List<DashboardStatus> selectedStatuses = getSelectedStatuses();
 
         QueuingSwingWorkerTask<Void, Void> task = new QueuingSwingWorkerTask<Void, Void>(plugin.getPluginPointName(), "Updating " + plugin.getPluginPointName() + " dashboard plugin...") {
@@ -246,7 +246,7 @@ public class DashboardPanel extends JPanel {
         new QueuingSwingWorker<Void, Void>(task, true).executeDelegate();
     }
 
-    private DashboardTabPlugin getCurrentTabPlugin() {
+    public DashboardTabPlugin getCurrentTabPlugin() {
         return LoadedExtensions.getInstance().getDashboardTabPlugins().get(tabPane.getTitleAt(tabPane.getSelectedIndex()));
     }
 

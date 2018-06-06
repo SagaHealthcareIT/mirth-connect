@@ -57,7 +57,7 @@ public class HttpReceiverProperties extends ConnectorProperties implements Liste
         this.responseHeaders = new LinkedHashMap<String, List<String>>();
         this.charset = "UTF-8";
         this.contextPath = "";
-        this.timeout = "0";
+        this.timeout = "30000";
         this.staticResources = new ArrayList<HttpStaticResource>();
     }
 
@@ -258,6 +258,9 @@ public class HttpReceiverProperties extends ConnectorProperties implements Liste
     @Override
     public void migrate3_5_0(DonkeyElement element) {}
 
+    @Override
+    public void migrate3_6_0(DonkeyElement element) {}
+    
     @Override
     public Map<String, Object> getPurgedProperties() {
         Map<String, Object> purgedProperties = super.getPurgedProperties();

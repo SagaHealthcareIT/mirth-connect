@@ -72,11 +72,28 @@ public class UserServlet extends MirthServlet implements UserServletInterface {
             }
 
             if (loginStatus == null) {
+                // Used for the second leg of multi-factor authentication
+                String loginData = request.getHeader(LOGIN_DATA_HEADER);
+
+                if (StringUtils.isNotBlank(loginData) && ControllerFactory.getFactory().createExtensionController().getMultiFactorAuthenticationPlugin() != null) {
+                    // We're on the second leg of multi-factor authentication, so delegate to the plugin
+                    loginStatus = ControllerFactory.getFactory().createExtensionController().getMultiFactorAuthenticationPlugin().authenticate(loginData);
+                } else {
+                    // Primary authentication
+                    loginStatus = userController.authorizeUser(username, password);
+                }
+
                 ConfigurationController configurationController = ControllerFactory.getFactory().createConfigurationController();
 
                 HttpSession session = request.getSession();
 
-                loginStatus = userController.authorizeUser(username, password);
+                /*
+                 * Default is 72 hours (3 days). The default SSL connection timeout is 24 hours, but
+                 * session data can remain active after that period and persist across multiple
+                 * connections.
+                 */
+                session.setMaxInactiveInterval(configurationController.getMaxInactiveSessionInterval());
+
                 username = StringUtils.defaultString(loginStatus.getUpdatedUsername(), username);
 
                 User validUser = null;
@@ -94,9 +111,6 @@ public class UserServlet extends MirthServlet implements UserServletInterface {
                         // set the sessions attributes
                         session.setAttribute(SESSION_USER, validUser.getId());
                         session.setAttribute(SESSION_AUTHORIZED, true);
-
-                        // this prevents the session from timing out
-                        session.setMaxInactiveInterval(-1);
 
                         // set the user status to logged in in the database
                         userController.loginUser(validUser);
